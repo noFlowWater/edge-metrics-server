@@ -12,13 +12,13 @@ import (
 func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 	query := `
 		SELECT device_id, device_type, interval, port, reload_port,
-		       enabled_metrics, jetson_config, shelly_config, ina260_config
+		       enabled_metrics, extra_config
 		FROM devices
 		WHERE device_id = ?
 	`
 
 	var config models.DeviceConfig
-	var enabledMetrics, jetsonConfig, shellyConfig, ina260Config sql.NullString
+	var enabledMetrics, extraConfig sql.NullString
 
 	err := database.DB.QueryRow(query, deviceID).Scan(
 		&config.DeviceID,
@@ -27,9 +27,7 @@ func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 		&config.Port,
 		&config.ReloadPort,
 		&enabledMetrics,
-		&jetsonConfig,
-		&shellyConfig,
-		&ina260Config,
+		&extraConfig,
 	)
 
 	if err != nil {
@@ -46,23 +44,9 @@ func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 		}
 	}
 
-	if jetsonConfig.Valid && jetsonConfig.String != "" {
-		config.Jetson = &models.JetsonConfig{}
-		if err := json.Unmarshal([]byte(jetsonConfig.String), config.Jetson); err != nil {
-			return nil, err
-		}
-	}
-
-	if shellyConfig.Valid && shellyConfig.String != "" {
-		config.Shelly = &models.ShellyConfig{}
-		if err := json.Unmarshal([]byte(shellyConfig.String), config.Shelly); err != nil {
-			return nil, err
-		}
-	}
-
-	if ina260Config.Valid && ina260Config.String != "" {
-		config.INA260 = &models.INA260Config{}
-		if err := json.Unmarshal([]byte(ina260Config.String), config.INA260); err != nil {
+	if extraConfig.Valid && extraConfig.String != "" {
+		config.ExtraConfig = make(map[string]interface{})
+		if err := json.Unmarshal([]byte(extraConfig.String), &config.ExtraConfig); err != nil {
 			return nil, err
 		}
 	}
@@ -81,8 +65,8 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 		return sql.ErrNoRows // Device not found
 	}
 
-	// Convert slices and structs to JSON
-	var enabledMetrics, jetsonConfig, shellyConfig, ina260Config sql.NullString
+	// Convert slices and maps to JSON
+	var enabledMetrics, extraConfig sql.NullString
 
 	if len(config.EnabledMetrics) > 0 {
 		data, err := json.Marshal(config.EnabledMetrics)
@@ -92,35 +76,18 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 		enabledMetrics = sql.NullString{String: string(data), Valid: true}
 	}
 
-	if config.Jetson != nil {
-		data, err := json.Marshal(config.Jetson)
+	if len(config.ExtraConfig) > 0 {
+		data, err := json.Marshal(config.ExtraConfig)
 		if err != nil {
 			return err
 		}
-		jetsonConfig = sql.NullString{String: string(data), Valid: true}
-	}
-
-	if config.Shelly != nil {
-		data, err := json.Marshal(config.Shelly)
-		if err != nil {
-			return err
-		}
-		shellyConfig = sql.NullString{String: string(data), Valid: true}
-	}
-
-	if config.INA260 != nil {
-		data, err := json.Marshal(config.INA260)
-		if err != nil {
-			return err
-		}
-		ina260Config = sql.NullString{String: string(data), Valid: true}
+		extraConfig = sql.NullString{String: string(data), Valid: true}
 	}
 
 	query := `
 		UPDATE devices
 		SET device_type = ?, interval = ?, port = ?, reload_port = ?,
-		    enabled_metrics = ?, jetson_config = ?, shelly_config = ?, ina260_config = ?,
-		    updated_at = ?
+		    enabled_metrics = ?, extra_config = ?, updated_at = ?
 		WHERE device_id = ?
 	`
 
@@ -130,9 +97,7 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 		config.Port,
 		config.ReloadPort,
 		enabledMetrics,
-		jetsonConfig,
-		shellyConfig,
-		ina260Config,
+		extraConfig,
 		time.Now(),
 		deviceID,
 	)
@@ -142,8 +107,8 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 
 // Create creates a new device configuration
 func Create(config *models.DeviceConfig) error {
-	// Convert slices and structs to JSON
-	var enabledMetrics, jetsonConfig, shellyConfig, ina260Config sql.NullString
+	// Convert slices and maps to JSON
+	var enabledMetrics, extraConfig sql.NullString
 
 	if len(config.EnabledMetrics) > 0 {
 		data, err := json.Marshal(config.EnabledMetrics)
@@ -153,34 +118,18 @@ func Create(config *models.DeviceConfig) error {
 		enabledMetrics = sql.NullString{String: string(data), Valid: true}
 	}
 
-	if config.Jetson != nil {
-		data, err := json.Marshal(config.Jetson)
+	if len(config.ExtraConfig) > 0 {
+		data, err := json.Marshal(config.ExtraConfig)
 		if err != nil {
 			return err
 		}
-		jetsonConfig = sql.NullString{String: string(data), Valid: true}
-	}
-
-	if config.Shelly != nil {
-		data, err := json.Marshal(config.Shelly)
-		if err != nil {
-			return err
-		}
-		shellyConfig = sql.NullString{String: string(data), Valid: true}
-	}
-
-	if config.INA260 != nil {
-		data, err := json.Marshal(config.INA260)
-		if err != nil {
-			return err
-		}
-		ina260Config = sql.NullString{String: string(data), Valid: true}
+		extraConfig = sql.NullString{String: string(data), Valid: true}
 	}
 
 	query := `
 		INSERT INTO devices (device_id, device_type, interval, port, reload_port,
-		                    enabled_metrics, jetson_config, shelly_config, ina260_config)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                    enabled_metrics, extra_config)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := database.DB.Exec(query,
@@ -190,9 +139,7 @@ func Create(config *models.DeviceConfig) error {
 		config.Port,
 		config.ReloadPort,
 		enabledMetrics,
-		jetsonConfig,
-		shellyConfig,
-		ina260Config,
+		extraConfig,
 	)
 
 	return err
