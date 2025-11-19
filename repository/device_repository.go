@@ -154,3 +154,39 @@ func Exists(deviceID string) (bool, error) {
 	}
 	return count > 0, nil
 }
+
+// Upsert creates or updates a device configuration
+func Upsert(deviceID string, config *models.DeviceConfig) (bool, error) {
+	exists, err := Exists(deviceID)
+	if err != nil {
+		return false, err
+	}
+
+	if exists {
+		err = Update(deviceID, config)
+		return false, err // false = updated
+	}
+
+	config.DeviceID = deviceID
+	err = Create(config)
+	return true, err // true = created
+}
+
+// Delete deletes a device configuration
+func Delete(deviceID string) error {
+	result, err := database.DB.Exec("DELETE FROM devices WHERE device_id = ?", deviceID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows // Device not found
+	}
+
+	return nil
+}

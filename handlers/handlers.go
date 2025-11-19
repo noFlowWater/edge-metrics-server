@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"edge-metrics-server/models"
 	"edge-metrics-server/repository"
-	"encoding/json"
 	"log"
 	"net/http"
 
@@ -133,27 +132,171 @@ func UpdateConfig(c *gin.Context) {
 		config.ReloadPort = 9101
 	}
 
-	err := repository.Update(deviceID, &config)
+	created, err := repository.Upsert(deviceID, &config)
+	if err != nil {
+		log.Printf("Error upserting config for %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to save device configuration",
+		})
+		return
+	}
+
+	status := "updated"
+	if created {
+		status = "registered"
+		log.Printf("Registered new device: %s", deviceID)
+	} else {
+		log.Printf("Updated config for device: %s", deviceID)
+	}
+
+	c.JSON(http.StatusOK, models.UpdateResponse{
+		Status:   status,
+		DeviceID: deviceID,
+	})
+}
+
+// CreateConfig handles POST /config/:device_id
+func CreateConfig(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Create request for device: %s", deviceID)
+
+	// Check if device already exists
+	exists, err := repository.Exists(deviceID)
+	if err != nil {
+		log.Printf("Error checking device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to check device existence",
+		})
+		return
+	}
+
+	if exists {
+		log.Printf("Device already exists: %s", deviceID)
+		c.JSON(http.StatusConflict, models.ErrorResponse{
+			Error:    "Device already exists",
+			DeviceID: deviceID,
+			Message:  "Use PUT to update existing device",
+		})
+		return
+	}
+
+	// Parse raw JSON to extract extra config fields
+	var rawData map[string]interface{}
+	if err := c.ShouldBindJSON(&rawData); err != nil {
+		log.Printf("Invalid JSON for %s: %v", deviceID, err)
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "Invalid request body",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Build DeviceConfig from raw data
+	config := models.DeviceConfig{
+		DeviceID: deviceID,
+	}
+
+	if deviceType, ok := rawData["device_type"].(string); ok {
+		config.DeviceType = deviceType
+	} else {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "Missing required field",
+			Message: "device_type is required",
+		})
+		return
+	}
+
+	if interval, ok := rawData["interval"].(float64); ok {
+		config.Interval = int(interval)
+	}
+	if port, ok := rawData["port"].(float64); ok {
+		config.Port = int(port)
+	}
+	if reloadPort, ok := rawData["reload_port"].(float64); ok {
+		config.ReloadPort = int(reloadPort)
+	}
+
+	// Parse enabled_metrics
+	if metrics, ok := rawData["enabled_metrics"].([]interface{}); ok {
+		for _, m := range metrics {
+			if s, ok := m.(string); ok {
+				config.EnabledMetrics = append(config.EnabledMetrics, s)
+			}
+		}
+	}
+
+	// Extract extra config
+	standardFields := map[string]bool{
+		"device_type":     true,
+		"interval":        true,
+		"port":            true,
+		"reload_port":     true,
+		"enabled_metrics": true,
+	}
+
+	config.ExtraConfig = make(map[string]interface{})
+	for key, value := range rawData {
+		if !standardFields[key] {
+			config.ExtraConfig[key] = value
+		}
+	}
+
+	// Set defaults
+	if config.Interval == 0 {
+		config.Interval = 1
+	}
+	if config.Port == 0 {
+		config.Port = 9100
+	}
+	if config.ReloadPort == 0 {
+		config.ReloadPort = 9101
+	}
+
+	err = repository.Create(&config)
+	if err != nil {
+		log.Printf("Error creating config for %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to create device configuration",
+		})
+		return
+	}
+
+	log.Printf("Created new device: %s", deviceID)
+	c.JSON(http.StatusCreated, models.UpdateResponse{
+		Status:   "created",
+		DeviceID: deviceID,
+	})
+}
+
+// DeleteConfig handles DELETE /config/:device_id
+func DeleteConfig(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Delete request for device: %s", deviceID)
+
+	err := repository.Delete(deviceID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("Device not found for update: %s", deviceID)
+			log.Printf("Device not found for delete: %s", deviceID)
 			c.JSON(http.StatusNotFound, models.ErrorResponse{
 				Error:    "Device not found",
 				DeviceID: deviceID,
 			})
 			return
 		}
-		log.Printf("Error updating config for %s: %v", deviceID, err)
+		log.Printf("Error deleting config for %s: %v", deviceID, err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "Internal server error",
-			Message: "Failed to update device configuration",
+			Message: "Failed to delete device configuration",
 		})
 		return
 	}
 
-	log.Printf("Updated config for device: %s", deviceID)
+	log.Printf("Deleted device: %s", deviceID)
 	c.JSON(http.StatusOK, models.UpdateResponse{
-		Status:   "updated",
+		Status:   "deleted",
 		DeviceID: deviceID,
 	})
 }
@@ -167,8 +310,3 @@ func Health(c *gin.Context) {
 	})
 }
 
-// Helper to convert interface to JSON string (for logging/debugging)
-func toJSON(v interface{}) string {
-	b, _ := json.Marshal(v)
-	return string(b)
-}

@@ -33,7 +33,9 @@ func main() {
 
 	// Routes
 	router.GET("/config/:device_id", handlers.GetConfig)
+	router.POST("/config/:device_id", handlers.CreateConfig)
 	router.PUT("/config/:device_id", handlers.UpdateConfig)
+	router.DELETE("/config/:device_id", handlers.DeleteConfig)
 	router.GET("/health", handlers.Health)
 
 	// Start server
