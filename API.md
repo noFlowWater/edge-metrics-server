@@ -557,6 +557,7 @@ curl http://localhost:8081/metrics/summary
 |-------------|-------------|--------------|
 | `jetson_orin` | NVIDIA Jetson Orin | `jetson` |
 | `jetson_xavier` | NVIDIA Jetson Xavier | `jetson` |
+| `jetson_nano` | NVIDIA Jetson Nano | `jetson` |
 | `jetson` | Generic NVIDIA Jetson | `jetson` |
 | `raspberry_pi` | Raspberry Pi | - |
 | `orange_pi` | Orange Pi | - |
