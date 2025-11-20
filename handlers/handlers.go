@@ -419,7 +419,7 @@ func ReloadDevice(c *gin.Context) {
 	}
 
 	// Trigger reload
-	success, errMsg := TriggerDeviceReload(device)
+	success, errMsg := TriggerDeviceReload(*device)
 	if !success {
 		log.Printf("Failed to trigger reload for %s: %s", deviceID, errMsg)
 		statusCode := http.StatusServiceUnavailable
@@ -644,7 +644,7 @@ func PatchConfig(c *gin.Context) {
 	// Trigger reload
 	reloadTriggered := false
 	if existing.IPAddress != "" {
-		reloadTriggered = TriggerDeviceReloadWithLogging(deviceID, existing)
+		reloadTriggered = TriggerDeviceReloadWithLogging(deviceID, *existing)
 	}
 
 	log.Printf("Patched config for device: %s", deviceID)
