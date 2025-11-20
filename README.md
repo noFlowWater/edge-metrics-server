@@ -30,7 +30,142 @@ go build -o edge-metrics-server
 PORT=8080 DB_PATH=/data/config.db ./edge-metrics-server
 ```
 
-### Kubernetes 배포
+## Docker
+
+### Docker 이미지 빌드
+
+#### 방법 1: 자동화 스크립트 사용 (권장)
+
+```bash
+# 기본 빌드 (로컬, latest 태그)
+./scripts/build.sh
+
+# 버전 지정
+./scripts/build.sh v1.0.0
+
+# 레지스트리와 함께 빌드 및 푸시
+REGISTRY=myregistry.com PUSH=true ./scripts/build.sh v1.0.0
+
+# 멀티 플랫폼 빌드 (AMD64 + ARM64)
+PLATFORM=linux/amd64,linux/arm64 PUSH=true REGISTRY=myregistry.com ./scripts/build.sh v1.0.0
+```
+
+**환경변수:**
+- `REGISTRY`: Docker 레지스트리 주소 (예: docker.io/myuser)
+- `PUSH`: true 시 레지스트리에 푸시
+- `PLATFORM`: 멀티 플랫폼 빌드 (buildx 필요)
+
+#### 방법 2: 수동 빌드
+
+```bash
+# 기본 빌드
+docker build -t edge-metrics-server:latest .
+
+# 특정 버전 태그
+docker build -t edge-metrics-server:v1.0.0 .
+
+# 레지스트리에 푸시
+docker tag edge-metrics-server:v1.0.0 myregistry.com/edge-metrics-server:v1.0.0
+docker push myregistry.com/edge-metrics-server:v1.0.0
+```
+
+### Docker 이미지 실행
+
+```bash
+# 로컬 실행
+docker run -d \
+  --name edge-metrics-server \
+  -p 8081:8081 \
+  -v $(pwd)/data:/data \
+  edge-metrics-server:latest
+
+# 로그 확인
+docker logs -f edge-metrics-server
+
+# 컨테이너 정지
+docker stop edge-metrics-server
+docker rm edge-metrics-server
+```
+
+## Kubernetes 배포
+
+### 방법 1: 자동 배포 스크립트 (개발/테스트 환경)
+
+#### 전체 배포 (이미지 빌드 포함)
+
+```bash
+# 기본 배포 (로컬 이미지, emptyDir 볼륨)
+./scripts/deploy.sh
+
+# 버전 지정
+./scripts/deploy.sh v1.0.0
+
+# PVC 사용 (데이터 영구 보존)
+USE_PVC=true ./scripts/deploy.sh v1.0.0
+
+# ServiceMonitor 포함 (Prometheus Operator 사용 시)
+DEPLOY_SERVICEMONITOR=true ./scripts/deploy.sh v1.0.0
+
+# 프라이빗 레지스트리 사용
+REGISTRY=myregistry.com ./scripts/deploy.sh v1.0.0
+
+# 전체 옵션 예시
+NAMESPACE=monitoring \
+REGISTRY=myregistry.com \
+USE_PVC=true \
+DEPLOY_SERVICEMONITOR=true \
+./scripts/deploy.sh v1.0.0
+```
+
+**환경변수:**
+- `NAMESPACE`: 배포할 네임스페이스 (기본: monitoring)
+- `REGISTRY`: Docker 레지스트리 주소
+- `USE_PVC`: true 시 PVC 사용 (기본: false, emptyDir 사용)
+- `DEPLOY_SERVICEMONITOR`: true 시 ServiceMonitor 배포 (기본: false)
+
+#### 배포 확인
+
+```bash
+# Pod 상태 확인
+kubectl get pods -n monitoring -l app=edge-metrics-server
+
+# 로그 확인
+kubectl logs -n monitoring -l app=edge-metrics-server --tail=50 -f
+
+# 서비스 확인
+kubectl get svc -n monitoring edge-metrics-server
+```
+
+#### 배포 삭제
+
+```bash
+# 기본 삭제 (PVC 보존)
+./scripts/undeploy.sh
+
+# PVC까지 삭제 (데이터 영구 손실!)
+DELETE_PVC=true ./scripts/undeploy.sh
+
+# Docker 이미지까지 삭제
+DELETE_IMAGE=true ./scripts/undeploy.sh
+
+# 확인 없이 강제 삭제
+FORCE=true ./scripts/undeploy.sh
+
+# 전체 옵션 예시
+NAMESPACE=monitoring \
+DELETE_PVC=true \
+DELETE_IMAGE=true \
+FORCE=true \
+./scripts/undeploy.sh
+```
+
+**환경변수:**
+- `NAMESPACE`: 네임스페이스 (기본: monitoring)
+- `DELETE_PVC`: true 시 PVC도 삭제 (기본: false, 데이터 보존)
+- `DELETE_IMAGE`: true 시 Docker 이미지 삭제 (기본: false)
+- `FORCE`: true 시 확인 없이 삭제 (기본: false)
+
+### 방법 2: 수동 배포 (프로덕션 환경 권장)
 
 #### 1. RBAC 리소스 생성 (최초 1회)
 
@@ -283,15 +418,182 @@ spec:
 
 ## Environment Variables
 
+### 애플리케이션 실행 환경변수
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 8081 | 서버 포트 |
 | `DB_PATH` | ./config.db | SQLite 데이터베이스 경로 |
 | `SERVER_URL` | http://localhost:8081 | 자기 자신의 URL (K8s sync에서 사용) |
 
+### 배포 스크립트 환경변수
+
+#### scripts/build.sh
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REGISTRY` | (없음) | Docker 레지스트리 주소 (예: docker.io/myuser) |
+| `PUSH` | false | true 시 레지스트리에 푸시 |
+| `PLATFORM` | (없음) | 멀티 플랫폼 빌드 (예: linux/amd64,linux/arm64) |
+
+#### scripts/deploy.sh
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NAMESPACE` | monitoring | 배포할 Kubernetes 네임스페이스 |
+| `REGISTRY` | (없음) | Docker 레지스트리 주소 |
+| `USE_PVC` | false | true 시 PVC 사용, false 시 emptyDir 사용 |
+| `DEPLOY_SERVICEMONITOR` | false | true 시 ServiceMonitor 배포 |
+
+#### scripts/undeploy.sh
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NAMESPACE` | monitoring | 삭제할 네임스페이스 |
+| `DELETE_PVC` | false | true 시 PVC도 삭제 (데이터 영구 손실!) |
+| `DELETE_IMAGE` | false | true 시 로컬 Docker 이미지도 삭제 |
+| `FORCE` | false | true 시 확인 없이 즉시 삭제 |
+
 ## API Documentation
 
 자세한 API 문서는 [API.md](./API.md)를 참조하세요.
+
+## Deployment Automation Scripts
+
+### scripts/build.sh - Docker 이미지 빌드
+
+Docker 이미지를 빌드하는 스크립트입니다. 멀티 플랫폼 빌드와 레지스트리 푸시를 지원합니다.
+
+**기본 사용법:**
+```bash
+./scripts/build.sh [VERSION]
+```
+
+**예시:**
+```bash
+# 로컬 빌드만
+./scripts/build.sh v1.0.0
+
+# 레지스트리에 푸시
+REGISTRY=docker.io/myuser PUSH=true ./scripts/build.sh v1.0.0
+
+# ARM64 + AMD64 멀티 플랫폼 빌드
+PLATFORM=linux/amd64,linux/arm64 PUSH=true REGISTRY=myregistry.com ./scripts/build.sh v1.0.0
+```
+
+### scripts/deploy.sh - 자동 배포
+
+Docker 이미지 빌드부터 Kubernetes 배포까지 전체 워크플로우를 자동화합니다.
+
+**기본 사용법:**
+```bash
+./scripts/deploy.sh [VERSION]
+```
+
+**동작 순서:**
+1. Docker 이미지 빌드
+2. 이미지 푸시 (REGISTRY 설정 시)
+3. 네임스페이스 생성 (없으면)
+4. RBAC 리소스 배포
+5. PVC 배포 (USE_PVC=true 시)
+6. Deployment 및 Service 배포
+7. ServiceMonitor 배포 (DEPLOY_SERVICEMONITOR=true 시)
+8. 배포 상태 확인
+
+**예시:**
+```bash
+# 개발 환경: 로컬 이미지, 임시 스토리지
+./scripts/deploy.sh
+
+# 테스트 환경: PVC 사용
+USE_PVC=true ./scripts/deploy.sh v1.0.0
+
+# 프로덕션 환경: 레지스트리 사용, PVC, ServiceMonitor
+NAMESPACE=monitoring \
+REGISTRY=myregistry.com \
+USE_PVC=true \
+DEPLOY_SERVICEMONITOR=true \
+./scripts/deploy.sh v1.0.0
+```
+
+### scripts/undeploy.sh - 자동 삭제
+
+배포된 리소스를 역순으로 안전하게 삭제합니다.
+
+**기본 사용법:**
+```bash
+./scripts/undeploy.sh
+```
+
+**동작 순서:**
+1. 사용자 확인 (FORCE=true가 아닌 경우)
+2. ServiceMonitor 삭제
+3. Service 삭제
+4. Deployment 삭제
+5. Pod 종료 대기 (60초 타임아웃)
+6. PVC 삭제 (DELETE_PVC=true 시)
+7. RBAC 삭제
+8. Docker 이미지 삭제 (DELETE_IMAGE=true 시)
+
+**예시:**
+```bash
+# 기본 삭제 (PVC 보존)
+./scripts/undeploy.sh
+
+# 완전 삭제 (데이터 포함)
+DELETE_PVC=true ./scripts/undeploy.sh
+
+# 확인 없이 즉시 삭제
+FORCE=true DELETE_PVC=true DELETE_IMAGE=true ./scripts/undeploy.sh
+```
+
+**안전 장치:**
+- PVC는 기본적으로 보존 (데이터 손실 방지)
+- 삭제 전 확인 프롬프트 (FORCE=false 시)
+- PVC 삭제 시 경고 메시지 표시
+- 삭제 후 남은 리소스 확인
+
+### 배포 워크플로우 예시
+
+#### 개발 환경
+
+```bash
+# 1. 빌드 및 배포
+./scripts/deploy.sh
+
+# 2. 로그 확인
+kubectl logs -n monitoring -l app=edge-metrics-server --tail=50 -f
+
+# 3. 테스트
+kubectl port-forward -n monitoring svc/edge-metrics-server 8081:8081
+curl http://localhost:8081/health
+
+# 4. 삭제
+./scripts/undeploy.sh
+```
+
+#### 프로덕션 환경
+
+```bash
+# 1. 이미지 빌드 및 푸시 (별도 실행)
+REGISTRY=myregistry.com PUSH=true ./scripts/build.sh v1.0.0
+
+# 2. 수동 배포 (더 안전함)
+kubectl apply -f manifests/rbac.yaml
+kubectl apply -f manifests/pvc.yaml
+
+# deployment.yaml 수정: 이미지 태그를 v1.0.0으로 변경
+kubectl apply -f manifests/deployment.yaml
+kubectl apply -f manifests/service.yaml
+kubectl apply -f manifests/servicemonitor.yaml
+
+# 3. 배포 확인
+kubectl get pods -n monitoring -w
+kubectl rollout status deployment/edge-metrics-server -n monitoring
+
+# 4. 필요 시 롤백
+kubectl rollout undo deployment/edge-metrics-server -n monitoring
+```
 
 ## Architecture
 
@@ -303,17 +605,26 @@ edge-metrics-server/
 ├── repository/                 # 데이터베이스 CRUD
 ├── handlers/                   # HTTP 핸들러
 │   ├── handlers.go            # 디바이스 관리 API
-│   └── kubernetes_handler.go  # Kubernetes 통합 API
+│   ├── kubernetes_handler.go  # Kubernetes 통합 API
+│   └── health.go              # 헬스 체크 유틸리티
 ├── router/                     # 라우트 설정
 ├── kubernetes/                 # Kubernetes 클라이언트
 │   ├── client.go              # K8s 클라이언트 초기화
 │   ├── service.go             # Service 리소스 관리
 │   ├── endpoints.go           # Endpoints 리소스 관리
 │   └── sync.go                # 동기화 로직
-└── manifests/                  # Kubernetes 매니페스트
-    ├── rbac.yaml              # RBAC 권한
-    ├── deployment.yaml        # 서버 배포
-    └── service.yaml           # 서버 Service
+├── manifests/                  # Kubernetes 매니페스트
+│   ├── rbac.yaml              # RBAC 권한
+│   ├── pvc.yaml               # 영구 볼륨 클레임
+│   ├── deployment.yaml        # 서버 배포
+│   ├── service.yaml           # 서버 Service
+│   └── servicemonitor.yaml    # Prometheus ServiceMonitor
+├── scripts/                    # 배포 자동화 스크립트
+│   ├── build.sh               # Docker 이미지 빌드
+│   ├── deploy.sh              # 자동 배포
+│   └── undeploy.sh            # 자동 삭제
+├── Dockerfile                  # 멀티 스테이지 빌드
+└── .dockerignore              # Docker 빌드 제외 파일
 ```
 
 ## Security
