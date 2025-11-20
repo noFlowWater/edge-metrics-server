@@ -168,20 +168,7 @@ func UpdateConfig(c *gin.Context) {
 	// Trigger reload on exporter if IP is available
 	reloadTriggered := false
 	if config.IPAddress != "" {
-		reloadURL := fmt.Sprintf("http://%s:%d/reload", config.IPAddress, config.ReloadPort)
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Post(reloadURL, "application/json", nil)
-		if err != nil {
-			log.Printf("Failed to trigger reload for %s: %v", deviceID, err)
-		} else {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				reloadTriggered = true
-				log.Printf("Reload triggered for device: %s", deviceID)
-			} else {
-				log.Printf("Reload failed for %s: HTTP %d", deviceID, resp.StatusCode)
-			}
-		}
+		reloadTriggered = TriggerDeviceReloadWithLogging(deviceID, config)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -431,35 +418,20 @@ func ReloadDevice(c *gin.Context) {
 		return
 	}
 
-	if device.IPAddress == "" {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:    "No IP address",
-			DeviceID: deviceID,
-			Message:  "Device has no registered IP address",
-		})
-		return
-	}
-
 	// Trigger reload
-	reloadURL := fmt.Sprintf("http://%s:%d/reload", device.IPAddress, device.ReloadPort)
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Post(reloadURL, "application/json", nil)
-	if err != nil {
-		log.Printf("Failed to trigger reload for %s: %v", deviceID, err)
-		c.JSON(http.StatusServiceUnavailable, gin.H{
+	success, errMsg := TriggerDeviceReload(device)
+	if !success {
+		log.Printf("Failed to trigger reload for %s: %s", deviceID, errMsg)
+		statusCode := http.StatusServiceUnavailable
+		if errMsg == "No IP address" {
+			statusCode = http.StatusBadRequest
+		} else if errMsg[:4] == "HTTP" {
+			statusCode = http.StatusBadGateway
+		}
+		c.JSON(statusCode, gin.H{
 			"status":    "failed",
 			"device_id": deviceID,
-			"error":     err.Error(),
-		})
-		return
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{
-			"status":    "failed",
-			"device_id": deviceID,
-			"error":     fmt.Sprintf("HTTP %d", resp.StatusCode),
+			"error":     errMsg,
 		})
 		return
 	}
@@ -489,35 +461,23 @@ func ReloadAllDevices(c *gin.Context) {
 	success := 0
 	failed := 0
 
-	client := &http.Client{Timeout: 2 * time.Second}
-
 	for _, device := range devices {
 		result := gin.H{
 			"device_id": device.DeviceID,
 		}
 
-		if device.IPAddress == "" {
-			result["status"] = "skipped"
-			result["error"] = "No IP address"
-			failed++
+		reloadSuccess, errMsg := TriggerDeviceReload(device)
+		if reloadSuccess {
+			result["status"] = "reloaded"
+			success++
 		} else {
-			reloadURL := fmt.Sprintf("http://%s:%d/reload", device.IPAddress, device.ReloadPort)
-			resp, err := client.Post(reloadURL, "application/json", nil)
-			if err != nil {
-				result["status"] = "failed"
-				result["error"] = err.Error()
-				failed++
+			if errMsg == "No IP address" {
+				result["status"] = "skipped"
 			} else {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					result["status"] = "reloaded"
-					success++
-				} else {
-					result["status"] = "failed"
-					result["error"] = fmt.Sprintf("HTTP %d", resp.StatusCode)
-					failed++
-				}
+				result["status"] = "failed"
 			}
+			result["error"] = errMsg
+			failed++
 		}
 
 		results = append(results, result)
@@ -684,15 +644,7 @@ func PatchConfig(c *gin.Context) {
 	// Trigger reload
 	reloadTriggered := false
 	if existing.IPAddress != "" {
-		reloadURL := fmt.Sprintf("http://%s:%d/reload", existing.IPAddress, existing.ReloadPort)
-		client := &http.Client{Timeout: 2 * time.Second}
-		resp, err := client.Post(reloadURL, "application/json", nil)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				reloadTriggered = true
-			}
-		}
+		reloadTriggered = TriggerDeviceReloadWithLogging(deviceID, existing)
 	}
 
 	log.Printf("Patched config for device: %s", deviceID)
