@@ -100,7 +100,8 @@ Content-Type: application/json
 ```json
 {
   "status": "registered",
-  "device_id": "orin-desktop"
+  "device_id": "orin-desktop",
+  "reload_triggered": false
 }
 ```
 
@@ -108,9 +109,12 @@ Content-Type: application/json
 ```json
 {
   "status": "updated",
-  "device_id": "edge-01"
+  "device_id": "edge-01",
+  "reload_triggered": true
 }
 ```
+
+> **Note**: `reload_triggered`가 `true`이면 exporter의 `/reload` 엔드포인트가 호출되어 설정이 즉시 적용됩니다.
 
 **Response (400 Bad Request)**
 ```json
@@ -244,6 +248,112 @@ curl http://localhost:8081/health
 
 ---
 
+### GET /devices
+
+등록된 모든 디바이스와 상태를 조회합니다.
+
+**Request**
+```
+GET /devices
+```
+
+**Response (200 OK)**
+```json
+{
+  "devices": [
+    {
+      "device_id": "edge-01",
+      "device_type": "jetson_orin",
+      "ip_address": "192.168.1.10",
+      "port": 9100,
+      "reload_port": 9101,
+      "status": "healthy",
+      "last_seen": "2024-01-15T10:30:00Z"
+    },
+    {
+      "device_id": "edge-02",
+      "device_type": "jetson_xavier",
+      "ip_address": "192.168.1.11",
+      "port": 9100,
+      "reload_port": 9101,
+      "status": "unreachable",
+      "error": "connection refused"
+    }
+  ],
+  "total": 2,
+  "healthy": 1,
+  "unhealthy": 1
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| devices | array | 디바이스 상태 목록 |
+| total | integer | 전체 디바이스 수 |
+| healthy | integer | 정상 디바이스 수 |
+| unhealthy | integer | 비정상 디바이스 수 |
+
+**Device Status Fields**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| device_id | string | 디바이스 ID |
+| device_type | string | 디바이스 타입 |
+| ip_address | string | 디바이스 IP 주소 |
+| port | integer | 메트릭 서버 포트 |
+| reload_port | integer | 리로드 트리거 포트 |
+| status | string | healthy, unhealthy, unreachable, unknown |
+| last_seen | string | 마지막 응답 시간 (healthy인 경우) |
+| error | string | 에러 메시지 (비정상인 경우) |
+
+**Example**
+```bash
+curl http://localhost:8081/devices
+```
+
+---
+
+### GET /devices/{device_id}/status
+
+특정 디바이스의 상태를 조회합니다.
+
+**Request**
+```
+GET /devices/{device_id}/status
+```
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| device_id | string | path | 디바이스 hostname |
+
+**Response (200 OK)**
+```json
+{
+  "device_id": "edge-01",
+  "device_type": "jetson_orin",
+  "ip_address": "192.168.1.10",
+  "port": 9100,
+  "reload_port": 9101,
+  "status": "healthy",
+  "last_seen": "2024-01-15T10:30:00Z"
+}
+```
+
+**Response (404 Not Found)**
+```json
+{
+  "error": "Device not found",
+  "device_id": "unknown-device"
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/devices/edge-01/status
+```
+
+---
+
 ## Device Types
 
 지원되는 디바이스 타입:
@@ -329,6 +439,7 @@ CREATE TABLE devices (
     reload_port INTEGER DEFAULT 9101,
     enabled_metrics TEXT,    -- JSON array
     extra_config TEXT,       -- JSON object
+    ip_address TEXT,         -- Auto-detected from request
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

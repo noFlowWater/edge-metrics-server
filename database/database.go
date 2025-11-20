@@ -27,11 +27,6 @@ func InitDB(dbPath string) error {
 		return err
 	}
 
-	// Insert sample data if empty
-	if err = insertSampleData(); err != nil {
-		return err
-	}
-
 	log.Println("Database initialized successfully")
 	return nil
 }
@@ -47,91 +42,20 @@ func createTables() error {
 		reload_port INTEGER DEFAULT 9101,
 		enabled_metrics TEXT,
 		extra_config TEXT,
+		ip_address TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	`
 
 	_, err := DB.Exec(query)
-	return err
-}
-
-// insertSampleData inserts sample device configurations if the table is empty
-func insertSampleData() error {
-	// Check if table is empty
-	var count int
-	err := DB.QueryRow("SELECT COUNT(*) FROM devices").Scan(&count)
 	if err != nil {
 		return err
 	}
 
-	if count > 0 {
-		return nil // Data already exists
-	}
+	// Add ip_address column if it doesn't exist (for existing databases)
+	_, _ = DB.Exec("ALTER TABLE devices ADD COLUMN ip_address TEXT")
 
-	// Insert sample devices
-	samples := []struct {
-		deviceID       string
-		deviceType     string
-		interval       int
-		port           int
-		reloadPort     int
-		enabledMetrics string
-		extraConfig    string
-	}{
-		{
-			deviceID:       "edge-01",
-			deviceType:     "jetson_orin",
-			interval:       1,
-			port:           9100,
-			reloadPort:     9101,
-			enabledMetrics: `["jetson_power_vdd_gpu_soc_watts","jetson_temp_cpu_celsius","jetson_ram_used_percent"]`,
-			extraConfig:    `{"jetson":{"use_tegrastats":true}}`,
-		},
-		{
-			deviceID:       "edge-02",
-			deviceType:     "jetson_xavier",
-			interval:       2,
-			port:           9100,
-			reloadPort:     9101,
-			enabledMetrics: "",
-			extraConfig:    "",
-		},
-		{
-			deviceID:    "rpi-sensor-01",
-			deviceType:  "raspberry_pi",
-			interval:    5,
-			port:        9100,
-			reloadPort:  9101,
-			extraConfig: "",
-		},
-		{
-			deviceID:    "shelly-plug-01",
-			deviceType:  "shelly",
-			interval:    10,
-			port:        9100,
-			reloadPort:  9101,
-			extraConfig: `{"shelly":{"host":"192.168.1.100","switch_id":0}}`,
-		},
-	}
-
-	stmt, err := DB.Prepare(`
-		INSERT INTO devices (device_id, device_type, interval, port, reload_port, enabled_metrics, extra_config)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, s := range samples {
-		_, err = stmt.Exec(s.deviceID, s.deviceType, s.interval, s.port, s.reloadPort, s.enabledMetrics, s.extraConfig)
-		if err != nil {
-			return err
-		}
-	}
-
-	log.Println("Sample data inserted successfully")
 	return nil
 }
 

@@ -2,7 +2,7 @@ package main
 
 import (
 	"edge-metrics-server/database"
-	"edge-metrics-server/handlers"
+	"edge-metrics-server/router"
 	"log"
 	"os"
 
@@ -29,18 +29,14 @@ func main() {
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)
-	router := gin.Default()
+	r := gin.Default()
 
-	// Routes
-	router.GET("/config/:device_id", handlers.GetConfig)
-	router.POST("/config/:device_id", handlers.CreateConfig)
-	router.PUT("/config/:device_id", handlers.UpdateConfig)
-	router.DELETE("/config/:device_id", handlers.DeleteConfig)
-	router.GET("/health", handlers.Health)
+	// Setup routes
+	router.SetupRoutes(r)
 
 	// Start server
 	log.Printf("Starting CONFIG SERVER on port %s", port)
-	if err := router.Run("0.0.0.0:" + port); err != nil {
+	if err := r.Run("0.0.0.0:" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

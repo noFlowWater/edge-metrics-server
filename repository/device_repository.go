@@ -12,13 +12,13 @@ import (
 func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 	query := `
 		SELECT device_id, device_type, interval, port, reload_port,
-		       enabled_metrics, extra_config
+		       enabled_metrics, extra_config, ip_address
 		FROM devices
 		WHERE device_id = ?
 	`
 
 	var config models.DeviceConfig
-	var enabledMetrics, extraConfig sql.NullString
+	var enabledMetrics, extraConfig, ipAddress sql.NullString
 
 	err := database.DB.QueryRow(query, deviceID).Scan(
 		&config.DeviceID,
@@ -28,7 +28,12 @@ func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 		&config.ReloadPort,
 		&enabledMetrics,
 		&extraConfig,
+		&ipAddress,
 	)
+
+	if ipAddress.Valid {
+		config.IPAddress = ipAddress.String
+	}
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -87,7 +92,7 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 	query := `
 		UPDATE devices
 		SET device_type = ?, interval = ?, port = ?, reload_port = ?,
-		    enabled_metrics = ?, extra_config = ?, updated_at = ?
+		    enabled_metrics = ?, extra_config = ?, ip_address = ?, updated_at = ?
 		WHERE device_id = ?
 	`
 
@@ -98,6 +103,7 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 		config.ReloadPort,
 		enabledMetrics,
 		extraConfig,
+		config.IPAddress,
 		time.Now(),
 		deviceID,
 	)
@@ -128,8 +134,8 @@ func Create(config *models.DeviceConfig) error {
 
 	query := `
 		INSERT INTO devices (device_id, device_type, interval, port, reload_port,
-		                    enabled_metrics, extra_config)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		                    enabled_metrics, extra_config, ip_address)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := database.DB.Exec(query,
@@ -140,6 +146,7 @@ func Create(config *models.DeviceConfig) error {
 		config.ReloadPort,
 		enabledMetrics,
 		extraConfig,
+		config.IPAddress,
 	)
 
 	return err
@@ -189,4 +196,57 @@ func Delete(deviceID string) error {
 	}
 
 	return nil
+}
+
+// GetAll retrieves all device configurations
+func GetAll() ([]models.DeviceConfig, error) {
+	query := `
+		SELECT device_id, device_type, interval, port, reload_port,
+		       enabled_metrics, extra_config, ip_address
+		FROM devices
+		ORDER BY device_id
+	`
+
+	rows, err := database.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []models.DeviceConfig
+	for rows.Next() {
+		var config models.DeviceConfig
+		var enabledMetrics, extraConfig, ipAddress sql.NullString
+
+		err := rows.Scan(
+			&config.DeviceID,
+			&config.DeviceType,
+			&config.Interval,
+			&config.Port,
+			&config.ReloadPort,
+			&enabledMetrics,
+			&extraConfig,
+			&ipAddress,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if ipAddress.Valid {
+			config.IPAddress = ipAddress.String
+		}
+
+		if enabledMetrics.Valid && enabledMetrics.String != "" {
+			json.Unmarshal([]byte(enabledMetrics.String), &config.EnabledMetrics)
+		}
+
+		if extraConfig.Valid && extraConfig.String != "" {
+			config.ExtraConfig = make(map[string]interface{})
+			json.Unmarshal([]byte(extraConfig.String), &config.ExtraConfig)
+		}
+
+		devices = append(devices, config)
+	}
+
+	return devices, rows.Err()
 }

@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"edge-metrics-server/models"
 	"edge-metrics-server/repository"
+	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -132,6 +134,9 @@ func UpdateConfig(c *gin.Context) {
 		config.ReloadPort = 9101
 	}
 
+	// Save client IP address
+	config.IPAddress = c.ClientIP()
+
 	created, err := repository.Upsert(deviceID, &config)
 	if err != nil {
 		log.Printf("Error upserting config for %s: %v", deviceID, err)
@@ -150,9 +155,29 @@ func UpdateConfig(c *gin.Context) {
 		log.Printf("Updated config for device: %s", deviceID)
 	}
 
-	c.JSON(http.StatusOK, models.UpdateResponse{
-		Status:   status,
-		DeviceID: deviceID,
+	// Trigger reload on exporter if IP is available
+	reloadTriggered := false
+	if config.IPAddress != "" {
+		reloadURL := fmt.Sprintf("http://%s:%d/reload", config.IPAddress, config.ReloadPort)
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Post(reloadURL, "application/json", nil)
+		if err != nil {
+			log.Printf("Failed to trigger reload for %s: %v", deviceID, err)
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				reloadTriggered = true
+				log.Printf("Reload triggered for device: %s", deviceID)
+			} else {
+				log.Printf("Reload failed for %s: HTTP %d", deviceID, resp.StatusCode)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":           status,
+		"device_id":        deviceID,
+		"reload_triggered": reloadTriggered,
 	})
 }
 
@@ -254,6 +279,9 @@ func CreateConfig(c *gin.Context) {
 		config.ReloadPort = 9101
 	}
 
+	// Save client IP address
+	config.IPAddress = c.ClientIP()
+
 	err = repository.Create(&config)
 	if err != nil {
 		log.Printf("Error creating config for %s: %v", deviceID, err)
@@ -308,5 +336,130 @@ func Health(c *gin.Context) {
 		Service: "config-server",
 		Version: "1.0.0",
 	})
+}
+
+// ListDevices handles GET /devices
+func ListDevices(c *gin.Context) {
+	log.Printf("List devices request")
+
+	devices, err := repository.GetAll()
+	if err != nil {
+		log.Printf("Error fetching devices: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch devices",
+		})
+		return
+	}
+
+	// Check health status of each device
+	var deviceStatuses []models.DeviceStatus
+	healthy := 0
+	unhealthy := 0
+
+	for _, device := range devices {
+		status := models.DeviceStatus{
+			DeviceID:   device.DeviceID,
+			DeviceType: device.DeviceType,
+			IPAddress:  device.IPAddress,
+			Port:       device.Port,
+			ReloadPort: device.ReloadPort,
+		}
+
+		if device.IPAddress == "" {
+			status.Status = "unknown"
+			status.Error = "No IP address registered"
+			unhealthy++
+		} else {
+			// Check device health
+			healthURL := fmt.Sprintf("http://%s:%d/health", device.IPAddress, device.ReloadPort)
+			client := &http.Client{Timeout: 2 * time.Second}
+
+			resp, err := client.Get(healthURL)
+			if err != nil {
+				status.Status = "unreachable"
+				status.Error = err.Error()
+				unhealthy++
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					status.Status = "healthy"
+					status.LastSeen = time.Now().Format(time.RFC3339)
+					healthy++
+				} else {
+					status.Status = "unhealthy"
+					status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+					unhealthy++
+				}
+			}
+		}
+
+		deviceStatuses = append(deviceStatuses, status)
+	}
+
+	c.JSON(http.StatusOK, models.DevicesListResponse{
+		Devices:   deviceStatuses,
+		Total:     len(devices),
+		Healthy:   healthy,
+		Unhealthy: unhealthy,
+	})
+}
+
+// GetDeviceStatus handles GET /devices/:device_id/status
+func GetDeviceStatus(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Device status request for: %s", deviceID)
+
+	device, err := repository.GetByDeviceID(deviceID)
+	if err != nil {
+		log.Printf("Error fetching device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch device",
+		})
+		return
+	}
+
+	if device == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:    "Device not found",
+			DeviceID: deviceID,
+		})
+		return
+	}
+
+	status := models.DeviceStatus{
+		DeviceID:   device.DeviceID,
+		DeviceType: device.DeviceType,
+		IPAddress:  device.IPAddress,
+		Port:       device.Port,
+		ReloadPort: device.ReloadPort,
+	}
+
+	if device.IPAddress == "" {
+		status.Status = "unknown"
+		status.Error = "No IP address registered"
+	} else {
+		// Check device health
+		healthURL := fmt.Sprintf("http://%s:%d/health", device.IPAddress, device.ReloadPort)
+		client := &http.Client{Timeout: 2 * time.Second}
+
+		resp, err := client.Get(healthURL)
+		if err != nil {
+			status.Status = "unreachable"
+			status.Error = err.Error()
+		} else {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				status.Status = "healthy"
+				status.LastSeen = time.Now().Format(time.RFC3339)
+			} else {
+				status.Status = "unhealthy"
+				status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, status)
 }
 

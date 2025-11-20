@@ -8,7 +8,28 @@ type DeviceConfig struct {
 	Port           int                    `json:"port,omitempty"`
 	ReloadPort     int                    `json:"reload_port,omitempty"`
 	EnabledMetrics []string               `json:"enabled_metrics,omitempty"`
-	ExtraConfig    map[string]interface{} `json:"-"` // Device-specific config (shelly, jetson, ina260, etc.)
+	ExtraConfig    map[string]interface{} `json:"-"`                      // Device-specific config (shelly, jetson, ina260, etc.)
+	IPAddress      string                 `json:"ip_address,omitempty"`
+}
+
+// DeviceStatus represents a device with its health status
+type DeviceStatus struct {
+	DeviceID   string `json:"device_id"`
+	DeviceType string `json:"device_type"`
+	IPAddress  string `json:"ip_address,omitempty"`
+	Port       int    `json:"port"`
+	ReloadPort int    `json:"reload_port"`
+	Status     string `json:"status"` // healthy, unhealthy, unreachable
+	LastSeen   string `json:"last_seen,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// DevicesListResponse represents the response for listing all devices
+type DevicesListResponse struct {
+	Devices   []DeviceStatus `json:"devices"`
+	Total     int            `json:"total"`
+	Healthy   int            `json:"healthy"`
+	Unhealthy int            `json:"unhealthy"`
 }
 
 // ErrorResponse represents an error response
