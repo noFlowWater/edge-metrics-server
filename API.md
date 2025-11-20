@@ -549,6 +549,205 @@ curl http://localhost:8081/metrics/summary
 
 ---
 
+## Kubernetes Integration
+
+### POST /kubernetes/sync
+
+현재 healthy 상태인 모든 디바이스를 Kubernetes Service + Endpoints로 동기화합니다.
+
+**Request**
+```
+POST /kubernetes/sync
+Content-Type: application/json
+```
+
+**Request Body**
+```json
+{
+  "namespace": "monitoring"
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| namespace | string | No | monitoring | 동기화 대상 Kubernetes 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "status": "synced",
+  "created": [
+    {
+      "device_id": "edge-01",
+      "service": "edge-device-edge-01",
+      "status": "created"
+    }
+  ],
+  "updated": [
+    {
+      "device_id": "edge-02",
+      "service": "edge-device-edge-02",
+      "status": "updated"
+    }
+  ],
+  "deleted": [],
+  "failed": [],
+  "total_healthy": 2
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Kubernetes client not initialized",
+  "message": "Server not running in Kubernetes environment or kubeconfig not found"
+}
+```
+
+**Example**
+```bash
+curl -X POST http://localhost:8081/kubernetes/sync \
+  -H "Content-Type: application/json" \
+  -d '{"namespace": "monitoring"}'
+```
+
+**동작:**
+1. GET /devices API를 호출하여 healthy 디바이스 목록 조회
+2. 각 디바이스마다 Service + Endpoints 리소스 생성/업데이트
+   - Service 이름: `edge-device-{device_id}`
+   - Endpoints IP: 디바이스의 `ip_address`
+   - 포트: 디바이스의 `port` (기본 9100)
+   - 레이블: `app=edge-exporter`, `device_id`, `device_type`, `managed_by=edge-metrics-server`
+3. DB에는 있지만 unhealthy하거나 삭제된 디바이스의 리소스는 삭제
+4. 결과 반환
+
+---
+
+### GET /kubernetes/manifests
+
+Healthy 디바이스들의 Kubernetes YAML 매니페스트를 생성합니다 (수동 적용용).
+
+**Request**
+```
+GET /kubernetes/manifests?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| namespace | string | query | monitoring | 매니페스트 생성 대상 네임스페이스 |
+
+**Response (200 OK)**
+```yaml
+# Kubernetes manifests for edge devices
+# Generated for namespace: monitoring
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-device-edge-01
+  namespace: monitoring
+  labels:
+    app: edge-exporter
+    device_id: edge-01
+    device_type: jetson_orin
+    managed_by: edge-metrics-server
+spec:
+  clusterIP: None
+  ports:
+  - name: metrics
+    port: 9100
+    targetPort: 9100
+    protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: edge-device-edge-01
+  namespace: monitoring
+  labels:
+    app: edge-exporter
+    device_id: edge-01
+    managed_by: edge-metrics-server
+subsets:
+- addresses:
+  - ip: 192.168.1.10
+  ports:
+  - name: metrics
+    port: 9100
+    protocol: TCP
+
+# ... (추가 디바이스들)
+```
+
+**Example**
+```bash
+# YAML 생성 및 저장
+curl http://localhost:8081/kubernetes/manifests?namespace=monitoring > edge-devices.yaml
+
+# Kubernetes에 적용
+kubectl apply -f edge-devices.yaml
+```
+
+**동작:**
+1. 모든 디바이스 설정 조회
+2. 각 디바이스의 health 체크
+3. Healthy 디바이스들만 YAML 매니페스트 생성
+4. text/plain으로 반환
+
+---
+
+### DELETE /kubernetes/cleanup
+
+monitoring 네임스페이스의 모든 edge-device-* 리소스를 삭제합니다.
+
+**Request**
+```
+DELETE /kubernetes/cleanup?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| namespace | string | query | monitoring | 정리할 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "status": "cleaned",
+  "deleted_services": [
+    "edge-device-edge-01",
+    "edge-device-edge-02"
+  ],
+  "deleted_endpoints": [
+    "edge-device-edge-01",
+    "edge-device-edge-02"
+  ],
+  "namespace": "monitoring"
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Kubernetes client not initialized",
+  "message": "Server not running in Kubernetes environment or kubeconfig not found"
+}
+```
+
+**Example**
+```bash
+curl -X DELETE http://localhost:8081/kubernetes/cleanup?namespace=monitoring
+```
+
+**동작:**
+1. `managed_by=edge-metrics-server` 레이블을 가진 모든 Service 조회
+2. 모든 Service 삭제
+3. `managed_by=edge-metrics-server` 레이블을 가진 모든 Endpoints 조회
+4. 모든 Endpoints 삭제
+5. 삭제된 리소스 목록 반환
+
+---
+
 ## Device Types
 
 지원되는 디바이스 타입:

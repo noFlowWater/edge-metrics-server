@@ -2,6 +2,7 @@ package main
 
 import (
 	"edge-metrics-server/database"
+	"edge-metrics-server/kubernetes"
 	"edge-metrics-server/router"
 	"log"
 	"os"
@@ -26,6 +27,13 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer database.CloseDB()
+
+	// Initialize Kubernetes client (optional, will fail gracefully if not in k8s)
+	if err := kubernetes.InitClient(); err != nil {
+		log.Printf("Kubernetes client not initialized: %v (Kubernetes features disabled)", err)
+	} else {
+		log.Printf("Kubernetes client initialized successfully")
+	}
 
 	// Setup Gin router
 	gin.SetMode(gin.ReleaseMode)

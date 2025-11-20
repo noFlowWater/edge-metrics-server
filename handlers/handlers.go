@@ -362,40 +362,12 @@ func ListDevices(c *gin.Context) {
 	unhealthy := 0
 
 	for _, device := range devices {
-		status := models.DeviceStatus{
-			DeviceID:   device.DeviceID,
-			DeviceType: device.DeviceType,
-			IPAddress:  device.IPAddress,
-			Port:       device.Port,
-			ReloadPort: device.ReloadPort,
-		}
+		status := CheckDeviceHealth(device)
 
-		if device.IPAddress == "" {
-			status.Status = "unknown"
-			status.Error = "No IP address registered"
-			unhealthy++
+		if status.Status == "healthy" {
+			healthy++
 		} else {
-			// Check device health
-			healthURL := fmt.Sprintf("http://%s:%d/health", device.IPAddress, device.ReloadPort)
-			client := &http.Client{Timeout: 2 * time.Second}
-
-			resp, err := client.Get(healthURL)
-			if err != nil {
-				status.Status = "unreachable"
-				status.Error = err.Error()
-				unhealthy++
-			} else {
-				resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					status.Status = "healthy"
-					status.LastSeen = time.Now().Format(time.RFC3339)
-					healthy++
-				} else {
-					status.Status = "unhealthy"
-					status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-					unhealthy++
-				}
-			}
+			unhealthy++
 		}
 
 		deviceStatuses = append(deviceStatuses, status)
@@ -432,38 +404,7 @@ func GetDeviceStatus(c *gin.Context) {
 		return
 	}
 
-	status := models.DeviceStatus{
-		DeviceID:   device.DeviceID,
-		DeviceType: device.DeviceType,
-		IPAddress:  device.IPAddress,
-		Port:       device.Port,
-		ReloadPort: device.ReloadPort,
-	}
-
-	if device.IPAddress == "" {
-		status.Status = "unknown"
-		status.Error = "No IP address registered"
-	} else {
-		// Check device health
-		healthURL := fmt.Sprintf("http://%s:%d/health", device.IPAddress, device.ReloadPort)
-		client := &http.Client{Timeout: 2 * time.Second}
-
-		resp, err := client.Get(healthURL)
-		if err != nil {
-			status.Status = "unreachable"
-			status.Error = err.Error()
-		} else {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				status.Status = "healthy"
-				status.LastSeen = time.Now().Format(time.RFC3339)
-			} else {
-				status.Status = "unhealthy"
-				status.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-			}
-		}
-	}
-
+	status := CheckDeviceHealth(*device)
 	c.JSON(http.StatusOK, status)
 }
 

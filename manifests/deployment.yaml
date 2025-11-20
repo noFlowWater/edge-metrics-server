@@ -1,0 +1,63 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-metrics-server
+  namespace: monitoring
+  labels:
+    app: edge-metrics-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-metrics-server
+  template:
+    metadata:
+      labels:
+        app: edge-metrics-server
+    spec:
+      serviceAccountName: edge-metrics-server
+      containers:
+      - name: server
+        image: edge-metrics-server:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8081
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8081"
+        - name: DB_PATH
+          value: "/data/config.db"
+        - name: SERVER_URL
+          value: "http://localhost:8081"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+      volumes:
+      - name: data
+        # emptyDir 사용 시: Pod 재시작하면 데이터 삭제됨 (임시 테스트용)
+        emptyDir: {}
+        # PVC 사용 시: 아래 주석 해제하고 pvc.yaml 먼저 적용
+        # persistentVolumeClaim:
+        #   claimName: edge-metrics-data
