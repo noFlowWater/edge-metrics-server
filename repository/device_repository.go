@@ -11,7 +11,7 @@ import (
 // GetByDeviceID retrieves a device configuration by device ID
 func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 	query := `
-		SELECT device_id, device_type, interval, port, reload_port,
+		SELECT device_id, device_type, port, reload_port,
 		       enabled_metrics, extra_config, ip_address
 		FROM devices
 		WHERE device_id = ?
@@ -23,7 +23,6 @@ func GetByDeviceID(deviceID string) (*models.DeviceConfig, error) {
 	err := database.DB.QueryRow(query, deviceID).Scan(
 		&config.DeviceID,
 		&config.DeviceType,
-		&config.Interval,
 		&config.Port,
 		&config.ReloadPort,
 		&enabledMetrics,
@@ -91,14 +90,13 @@ func Update(deviceID string, config *models.DeviceConfig) error {
 
 	query := `
 		UPDATE devices
-		SET device_type = ?, interval = ?, port = ?, reload_port = ?,
+		SET device_type = ?, port = ?, reload_port = ?,
 		    enabled_metrics = ?, extra_config = ?, ip_address = ?, updated_at = ?
 		WHERE device_id = ?
 	`
 
 	_, err = database.DB.Exec(query,
 		config.DeviceType,
-		config.Interval,
 		config.Port,
 		config.ReloadPort,
 		enabledMetrics,
@@ -133,15 +131,14 @@ func Create(config *models.DeviceConfig) error {
 	}
 
 	query := `
-		INSERT INTO devices (device_id, device_type, interval, port, reload_port,
+		INSERT INTO devices (device_id, device_type, port, reload_port,
 		                    enabled_metrics, extra_config, ip_address)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := database.DB.Exec(query,
 		config.DeviceID,
 		config.DeviceType,
-		config.Interval,
 		config.Port,
 		config.ReloadPort,
 		enabledMetrics,
@@ -201,7 +198,7 @@ func Delete(deviceID string) error {
 // GetAll retrieves all device configurations
 func GetAll() ([]models.DeviceConfig, error) {
 	query := `
-		SELECT device_id, device_type, interval, port, reload_port,
+		SELECT device_id, device_type, port, reload_port,
 		       enabled_metrics, extra_config, ip_address
 		FROM devices
 		ORDER BY device_id
@@ -221,7 +218,6 @@ func GetAll() ([]models.DeviceConfig, error) {
 		err := rows.Scan(
 			&config.DeviceID,
 			&config.DeviceType,
-			&config.Interval,
 			&config.Port,
 			&config.ReloadPort,
 			&enabledMetrics,

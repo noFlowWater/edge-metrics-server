@@ -4,11 +4,10 @@ package models
 type DeviceConfig struct {
 	DeviceID       string                 `json:"-"`
 	DeviceType     string                 `json:"device_type"`
-	Interval       int                    `json:"interval,omitempty"`
 	Port           int                    `json:"port,omitempty"`
 	ReloadPort     int                    `json:"reload_port,omitempty"`
 	EnabledMetrics []string               `json:"enabled_metrics,omitempty"`
-	ExtraConfig    map[string]interface{} `json:"-"`                      // Device-specific config (shelly, jetson, ina260, etc.)
+	ExtraConfig    map[string]interface{} `json:"-"` // Device-specific config (shelly, jetson, ina260, etc.)
 	IPAddress      string                 `json:"ip_address,omitempty"`
 }
 

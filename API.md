@@ -11,6 +11,45 @@ Edge Metrics Server는 edge-metrics-exporter 클라이언트를 위한 중앙 �
 
 ## Endpoints
 
+### GET /config
+
+모든 디바이스의 설정 목록을 조회합니다.
+
+**Request**
+```
+GET /config
+```
+
+**Response (200 OK)**
+```json
+{
+  "configs": [
+    {
+      "device_id": "edge-01",
+      "device_type": "jetson_orin",
+      "port": 9100,
+      "reload_port": 9101,
+      "enabled_metrics": ["jetson_power_vdd_gpu_soc_watts"],
+      "jetson": {"use_tegrastats": true}
+    },
+    {
+      "device_id": "edge-02",
+      "device_type": "raspberry_pi",
+      "port": 9100,
+      "reload_port": 9101
+    }
+  ],
+  "total": 2
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/config
+```
+
+---
+
 ### GET /config/{device_id}
 
 디바이스별 설정을 조회합니다.
@@ -28,7 +67,6 @@ GET /config/{device_id}
 ```json
 {
   "device_type": "jetson_orin",
-  "interval": 1,
   "port": 9100,
   "reload_port": 9101,
   "enabled_metrics": [
@@ -75,7 +113,6 @@ Content-Type: application/json
 ```json
 {
   "device_type": "jetson_orin",
-  "interval": 1,
   "port": 9100,
   "reload_port": 9101,
   "enabled_metrics": [
@@ -90,7 +127,6 @@ Content-Type: application/json
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | device_type | string | **Yes** | - | 디바이스 타입 |
-| interval | integer | No | 1 | 메트릭 수집 주기 (초) |
 | port | integer | No | 9100 | Prometheus 메트릭 서버 포트 |
 | reload_port | integer | No | 9101 | 설정 리로드 트리거 포트 |
 | enabled_metrics | array | No | null | 수집할 메트릭 목록 (null=전체) |
@@ -130,7 +166,6 @@ curl -X PUT http://localhost:8081/config/orin-desktop \
   -H "Content-Type: application/json" \
   -d '{
     "device_type": "jetson_orin",
-    "interval": 1,
     "jetson": {"use_tegrastats": true}
   }'
 ```
@@ -155,7 +190,6 @@ Content-Type: application/json
 ```json
 {
   "device_type": "jetson_orin",
-  "interval": 1,
   "port": 9100,
   "reload_port": 9101
 }
@@ -183,6 +217,56 @@ Content-Type: application/json
 curl -X POST http://localhost:8081/config/new-device \
   -H "Content-Type: application/json" \
   -d '{"device_type": "raspberry_pi"}'
+```
+
+---
+
+### PATCH /config/{device_id}
+
+디바이스 설정을 부분 업데이트합니다. 전달된 필드만 변경됩니다.
+
+**Request**
+```
+PATCH /config/{device_id}
+Content-Type: application/json
+```
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| device_id | string | path | 디바이스 hostname |
+
+**Request Body**
+```json
+{
+  "port": 9200
+}
+```
+
+> 변경하고자 하는 필드만 포함하면 됩니다. `null`을 전달하면 필드를 기본값으로 리셋하거나 삭제합니다.
+
+**Response (200 OK)**
+```json
+{
+  "status": "patched",
+  "device_id": "edge-01",
+  "reload_triggered": true
+}
+```
+
+**Response (404 Not Found)**
+```json
+{
+  "error": "Device not found",
+  "device_id": "unknown-device",
+  "message": "Use POST or PUT to create new device"
+}
+```
+
+**Example**
+```bash
+curl -X PATCH http://localhost:8081/config/edge-01 \
+  -H "Content-Type: application/json" \
+  -d '{"port": 9200}'
 ```
 
 ---
@@ -354,6 +438,117 @@ curl http://localhost:8081/devices/edge-01/status
 
 ---
 
+### POST /devices/{device_id}/reload
+
+특정 디바이스에 수동으로 reload를 트리거합니다.
+
+**Request**
+```
+POST /devices/{device_id}/reload
+```
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| device_id | string | path | 디바이스 hostname |
+
+**Response (200 OK)**
+```json
+{
+  "status": "reloaded",
+  "device_id": "edge-01"
+}
+```
+
+**Response (404 Not Found)**
+```json
+{
+  "error": "Device not found",
+  "device_id": "unknown-device"
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "status": "failed",
+  "device_id": "edge-01",
+  "error": "connection refused"
+}
+```
+
+**Example**
+```bash
+curl -X POST http://localhost:8081/devices/edge-01/reload
+```
+
+---
+
+### POST /devices/reload
+
+모든 디바이스에 일괄 reload를 트리거합니다.
+
+**Request**
+```
+POST /devices/reload
+```
+
+**Response (200 OK)**
+```json
+{
+  "results": [
+    {
+      "device_id": "edge-01",
+      "status": "reloaded"
+    },
+    {
+      "device_id": "edge-02",
+      "status": "failed",
+      "error": "connection refused"
+    }
+  ],
+  "total": 2,
+  "success": 1,
+  "failed": 1
+}
+```
+
+**Example**
+```bash
+curl -X POST http://localhost:8081/devices/reload
+```
+
+---
+
+### GET /metrics/summary
+
+전체 시스템 요약 통계를 조회합니다.
+
+**Request**
+```
+GET /metrics/summary
+```
+
+**Response (200 OK)**
+```json
+{
+  "total": 5,
+  "healthy": 3,
+  "unhealthy": 2,
+  "by_device_type": {
+    "jetson_orin": 2,
+    "raspberry_pi": 2,
+    "shelly": 1
+  }
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/metrics/summary
+```
+
+---
+
 ## Device Types
 
 지원되는 디바이스 타입:
@@ -434,7 +629,6 @@ curl http://localhost:8081/devices/edge-01/status
 CREATE TABLE devices (
     device_id TEXT PRIMARY KEY,
     device_type TEXT NOT NULL,
-    interval INTEGER DEFAULT 1,
     port INTEGER DEFAULT 9100,
     reload_port INTEGER DEFAULT 9101,
     enabled_metrics TEXT,    -- JSON array

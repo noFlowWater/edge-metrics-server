@@ -37,7 +37,6 @@ func createTables() error {
 	CREATE TABLE IF NOT EXISTS devices (
 		device_id TEXT PRIMARY KEY,
 		device_type TEXT NOT NULL,
-		interval INTEGER DEFAULT 1,
 		port INTEGER DEFAULT 9100,
 		reload_port INTEGER DEFAULT 9101,
 		enabled_metrics TEXT,

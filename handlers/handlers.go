@@ -12,6 +12,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// isLocalhost checks if the IP is a localhost address
+func isLocalhost(ip string) bool {
+	return ip == "127.0.0.1" || ip == "::1"
+}
+
+// resolveIPAddress determines the IP address to save
+// Preserves existing real IP when request comes from localhost
+func resolveIPAddress(clientIP string, existingIP string) string {
+	if isLocalhost(clientIP) && existingIP != "" && !isLocalhost(existingIP) {
+		return existingIP
+	}
+	return clientIP
+}
+
 // GetConfig handles GET /config/:device_id
 func GetConfig(c *gin.Context) {
 	deviceID := c.Param("device_id")
@@ -42,7 +56,6 @@ func GetConfig(c *gin.Context) {
 	// Build response without device_id field (as per API spec)
 	response := gin.H{
 		"device_type": config.DeviceType,
-		"interval":    config.Interval,
 		"port":        config.Port,
 		"reload_port": config.ReloadPort,
 	}
@@ -88,9 +101,6 @@ func UpdateConfig(c *gin.Context) {
 		return
 	}
 
-	if interval, ok := rawData["interval"].(float64); ok {
-		config.Interval = int(interval)
-	}
 	if port, ok := rawData["port"].(float64); ok {
 		config.Port = int(port)
 	}
@@ -110,7 +120,6 @@ func UpdateConfig(c *gin.Context) {
 	// Extract extra config (any keys that are not standard fields)
 	standardFields := map[string]bool{
 		"device_type":     true,
-		"interval":        true,
 		"port":            true,
 		"reload_port":     true,
 		"enabled_metrics": true,
@@ -124,9 +133,6 @@ func UpdateConfig(c *gin.Context) {
 	}
 
 	// Set defaults if not provided
-	if config.Interval == 0 {
-		config.Interval = 1
-	}
 	if config.Port == 0 {
 		config.Port = 9100
 	}
@@ -134,8 +140,12 @@ func UpdateConfig(c *gin.Context) {
 		config.ReloadPort = 9101
 	}
 
-	// Save client IP address
-	config.IPAddress = c.ClientIP()
+	// Save client IP address (preserve existing if updating from localhost)
+	existingIP := ""
+	if existing, _ := repository.GetByDeviceID(deviceID); existing != nil {
+		existingIP = existing.IPAddress
+	}
+	config.IPAddress = resolveIPAddress(c.ClientIP(), existingIP)
 
 	created, err := repository.Upsert(deviceID, &config)
 	if err != nil {
@@ -233,9 +243,6 @@ func CreateConfig(c *gin.Context) {
 		return
 	}
 
-	if interval, ok := rawData["interval"].(float64); ok {
-		config.Interval = int(interval)
-	}
 	if port, ok := rawData["port"].(float64); ok {
 		config.Port = int(port)
 	}
@@ -255,7 +262,6 @@ func CreateConfig(c *gin.Context) {
 	// Extract extra config
 	standardFields := map[string]bool{
 		"device_type":     true,
-		"interval":        true,
 		"port":            true,
 		"reload_port":     true,
 		"enabled_metrics": true,
@@ -269,9 +275,6 @@ func CreateConfig(c *gin.Context) {
 	}
 
 	// Set defaults
-	if config.Interval == 0 {
-		config.Interval = 1
-	}
 	if config.Port == 0 {
 		config.Port = 9100
 	}
@@ -280,7 +283,8 @@ func CreateConfig(c *gin.Context) {
 	}
 
 	// Save client IP address
-	config.IPAddress = c.ClientIP()
+	clientIP := c.ClientIP()
+	config.IPAddress = clientIP
 
 	err = repository.Create(&config)
 	if err != nil {
@@ -461,5 +465,351 @@ func GetDeviceStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+// ReloadDevice handles POST /devices/:device_id/reload
+func ReloadDevice(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Reload request for device: %s", deviceID)
+
+	device, err := repository.GetByDeviceID(deviceID)
+	if err != nil {
+		log.Printf("Error fetching device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch device",
+		})
+		return
+	}
+
+	if device == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:    "Device not found",
+			DeviceID: deviceID,
+		})
+		return
+	}
+
+	if device.IPAddress == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:    "No IP address",
+			DeviceID: deviceID,
+			Message:  "Device has no registered IP address",
+		})
+		return
+	}
+
+	// Trigger reload
+	reloadURL := fmt.Sprintf("http://%s:%d/reload", device.IPAddress, device.ReloadPort)
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Post(reloadURL, "application/json", nil)
+	if err != nil {
+		log.Printf("Failed to trigger reload for %s: %v", deviceID, err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"status":    "failed",
+			"device_id": deviceID,
+			"error":     err.Error(),
+		})
+		return
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"status":    "failed",
+			"device_id": deviceID,
+			"error":     fmt.Sprintf("HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	log.Printf("Reload triggered for device: %s", deviceID)
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "reloaded",
+		"device_id": deviceID,
+	})
+}
+
+// ReloadAllDevices handles POST /devices/reload
+func ReloadAllDevices(c *gin.Context) {
+	log.Printf("Reload all devices request")
+
+	devices, err := repository.GetAll()
+	if err != nil {
+		log.Printf("Error fetching devices: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch devices",
+		})
+		return
+	}
+
+	results := make([]gin.H, 0)
+	success := 0
+	failed := 0
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	for _, device := range devices {
+		result := gin.H{
+			"device_id": device.DeviceID,
+		}
+
+		if device.IPAddress == "" {
+			result["status"] = "skipped"
+			result["error"] = "No IP address"
+			failed++
+		} else {
+			reloadURL := fmt.Sprintf("http://%s:%d/reload", device.IPAddress, device.ReloadPort)
+			resp, err := client.Post(reloadURL, "application/json", nil)
+			if err != nil {
+				result["status"] = "failed"
+				result["error"] = err.Error()
+				failed++
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					result["status"] = "reloaded"
+					success++
+				} else {
+					result["status"] = "failed"
+					result["error"] = fmt.Sprintf("HTTP %d", resp.StatusCode)
+					failed++
+				}
+			}
+		}
+
+		results = append(results, result)
+	}
+
+	log.Printf("Reload all: %d success, %d failed", success, failed)
+	c.JSON(http.StatusOK, gin.H{
+		"results": results,
+		"total":   len(devices),
+		"success": success,
+		"failed":  failed,
+	})
+}
+
+// ListConfigs handles GET /config
+func ListConfigs(c *gin.Context) {
+	log.Printf("List all configs request")
+
+	devices, err := repository.GetAll()
+	if err != nil {
+		log.Printf("Error fetching configs: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch configurations",
+		})
+		return
+	}
+
+	configs := make([]gin.H, 0)
+	for _, device := range devices {
+		config := gin.H{
+			"device_id":   device.DeviceID,
+			"device_type": device.DeviceType,
+			"port":        device.Port,
+			"reload_port": device.ReloadPort,
+		}
+
+		if len(device.EnabledMetrics) > 0 {
+			config["enabled_metrics"] = device.EnabledMetrics
+		}
+
+		// Spread extra_config
+		for key, value := range device.ExtraConfig {
+			config[key] = value
+		}
+
+		configs = append(configs, config)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"configs": configs,
+		"total":   len(configs),
+	})
+}
+
+// PatchConfig handles PATCH /config/:device_id
+func PatchConfig(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Patch request for device: %s", deviceID)
+
+	// Check if device exists
+	existing, err := repository.GetByDeviceID(deviceID)
+	if err != nil {
+		log.Printf("Error fetching device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch device",
+		})
+		return
+	}
+
+	if existing == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:    "Device not found",
+			DeviceID: deviceID,
+			Message:  "Use POST or PUT to create new device",
+		})
+		return
+	}
+
+	// Parse patch data
+	var patchData map[string]interface{}
+	if err := c.ShouldBindJSON(&patchData); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "Invalid request body",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Apply patches to existing config
+	// null values will reset fields to defaults or remove them
+	if val, exists := patchData["device_type"]; exists {
+		if val == nil {
+			existing.DeviceType = ""
+		} else if s, ok := val.(string); ok {
+			existing.DeviceType = s
+		}
+	}
+	if val, exists := patchData["port"]; exists {
+		if val == nil {
+			existing.Port = 9100 // default
+		} else if f, ok := val.(float64); ok {
+			existing.Port = int(f)
+		}
+	}
+	if val, exists := patchData["reload_port"]; exists {
+		if val == nil {
+			existing.ReloadPort = 9101 // default
+		} else if f, ok := val.(float64); ok {
+			existing.ReloadPort = int(f)
+		}
+	}
+	if val, exists := patchData["enabled_metrics"]; exists {
+		if val == nil {
+			existing.EnabledMetrics = nil
+		} else if metrics, ok := val.([]interface{}); ok {
+			existing.EnabledMetrics = nil
+			for _, m := range metrics {
+				if s, ok := m.(string); ok {
+					existing.EnabledMetrics = append(existing.EnabledMetrics, s)
+				}
+			}
+		}
+	}
+
+	// Handle extra config patches
+	standardFields := map[string]bool{
+		"device_type":     true,
+		"port":            true,
+		"reload_port":     true,
+		"enabled_metrics": true,
+	}
+
+	if existing.ExtraConfig == nil {
+		existing.ExtraConfig = make(map[string]interface{})
+	}
+
+	for key, value := range patchData {
+		if !standardFields[key] {
+			if value == nil {
+				// Remove the key if value is null
+				delete(existing.ExtraConfig, key)
+			} else {
+				existing.ExtraConfig[key] = value
+			}
+		}
+	}
+
+	// Update IP address (preserve existing if updating from localhost)
+	existing.IPAddress = resolveIPAddress(c.ClientIP(), existing.IPAddress)
+
+	// Save updated config
+	err = repository.Update(deviceID, existing)
+	if err != nil {
+		log.Printf("Error updating config for %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to update device configuration",
+		})
+		return
+	}
+
+	// Trigger reload
+	reloadTriggered := false
+	if existing.IPAddress != "" {
+		reloadURL := fmt.Sprintf("http://%s:%d/reload", existing.IPAddress, existing.ReloadPort)
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Post(reloadURL, "application/json", nil)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				reloadTriggered = true
+			}
+		}
+	}
+
+	log.Printf("Patched config for device: %s", deviceID)
+	c.JSON(http.StatusOK, gin.H{
+		"status":           "patched",
+		"device_id":        deviceID,
+		"reload_triggered": reloadTriggered,
+	})
+}
+
+// GetMetricsSummary handles GET /metrics/summary
+func GetMetricsSummary(c *gin.Context) {
+	log.Printf("Metrics summary request")
+
+	devices, err := repository.GetAll()
+	if err != nil {
+		log.Printf("Error fetching devices: %v", err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch devices",
+		})
+		return
+	}
+
+	// Count by device type
+	typeCount := make(map[string]int)
+	healthy := 0
+	unhealthy := 0
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	for _, device := range devices {
+		typeCount[device.DeviceType]++
+
+		// Check health
+		if device.IPAddress == "" {
+			unhealthy++
+		} else {
+			healthURL := fmt.Sprintf("http://%s:%d/health", device.IPAddress, device.ReloadPort)
+			resp, err := client.Get(healthURL)
+			if err != nil {
+				unhealthy++
+			} else {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					healthy++
+				} else {
+					unhealthy++
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":          len(devices),
+		"healthy":        healthy,
+		"unhealthy":      unhealthy,
+		"by_device_type": typeCount,
+	})
 }
 
