@@ -6,6 +6,7 @@
 #   NAMESPACE=monitoring (default)
 #   REGISTRY= (예: myregistry.com)
 #   USE_PVC=false (default)
+#   USE_LOCAL_DB=false (default, 로컬 config.db 파일 마운트)
 #   DEPLOY_SERVICEMONITOR=false (default)
 
 set -e  # 에러 발생 시 즉시 종료
@@ -16,6 +17,7 @@ NAMESPACE=${NAMESPACE:-monitoring}
 REGISTRY=${REGISTRY:-}
 IMAGE_NAME="edge-metrics-server"
 USE_PVC=${USE_PVC:-false}
+USE_LOCAL_DB=${USE_LOCAL_DB:-false}
 DEPLOY_SERVICEMONITOR=${DEPLOY_SERVICEMONITOR:-false}
 
 # 색상
@@ -33,6 +35,7 @@ echo -e "${BLUE}설정:${NC}"
 echo "  버전: $VERSION"
 echo "  네임스페이스: $NAMESPACE"
 echo "  PVC 사용: $USE_PVC"
+echo "  로컬 DB 파일: $USE_LOCAL_DB"
 echo "  ServiceMonitor: $DEPLOY_SERVICEMONITOR"
 
 # 이미지 이름 결정
@@ -44,6 +47,15 @@ else
     echo "  레지스트리: (로컬)"
 fi
 echo ""
+
+# USE_LOCAL_DB 경고
+if [ "$USE_LOCAL_DB" = "true" ]; then
+    echo -e "${YELLOW}⚠️  USE_LOCAL_DB=true: 로컬 config.db 파일 직접 마운트 (개발 전용!)${NC}"
+    echo -e "${YELLOW}⚠️  보안 위험: 프로덕션 환경에서 절대 사용 금지${NC}"
+    echo -e "${YELLOW}⚠️  단일 노드 클러스터만 지원 (minikube, Docker Desktop 등)${NC}"
+    echo -e "${YELLOW}⚠️  Pod가 현재 노드($(hostname))에 고정됩니다${NC}"
+    echo ""
+fi
 
 # 1. Docker 이미지 빌드
 echo -e "${YELLOW}[1/7] 🔨 Docker 이미지 빌드...${NC}"
@@ -91,15 +103,40 @@ echo ""
 # 6. Deployment & Service 배포
 echo -e "${YELLOW}[6/7] 🚢 Deployment & Service 배포...${NC}"
 
-# deployment.yaml의 이미지 임시 치환
+# deployment.yaml 동적 수정
 TEMP_DEPLOYMENT=$(mktemp)
+
+# 이미지 치환
 if [ -n "$REGISTRY" ]; then
-    sed "s|image: edge-metrics-server:latest|image: $FULL_IMAGE|g" manifests/deployment.yaml > "$TEMP_DEPLOYMENT"
-    kubectl apply -f "$TEMP_DEPLOYMENT"
-    rm "$TEMP_DEPLOYMENT"
+    cat manifests/deployment.yaml | sed "s|image: edge-metrics-server:latest|image: $FULL_IMAGE|g" > "$TEMP_DEPLOYMENT"
 else
-    kubectl apply -f manifests/deployment.yaml
+    cp manifests/deployment.yaml "$TEMP_DEPLOYMENT"
 fi
+
+# PVC 또는 HostPath 설정
+if [ "$USE_PVC" = "true" ]; then
+    # PVC 사용: emptyDir 주석 처리, PVC 활성화
+    sed -i 's|emptyDir: {}|# emptyDir: {}|g' "$TEMP_DEPLOYMENT"
+    sed -i 's|# persistentVolumeClaim:|persistentVolumeClaim:|g' "$TEMP_DEPLOYMENT"
+    sed -i 's|#   claimName: edge-metrics-data|  claimName: edge-metrics-data|g' "$TEMP_DEPLOYMENT"
+elif [ "$USE_LOCAL_DB" = "true" ]; then
+    # HostPath 사용: emptyDir 주석 처리, hostPath 활성화, nodeSelector 활성화
+    PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    HOSTNAME=$(hostname)
+
+    # Volume 설정
+    sed -i 's|emptyDir: {}|# emptyDir: {}|g' "$TEMP_DEPLOYMENT"
+    sed -i 's|# hostPath:|hostPath:|g' "$TEMP_DEPLOYMENT"
+    sed -i "s|#   path: /home/genesis1/ETRI/edge-metrics/edge-metrics-server|  path: $PROJECT_DIR|g" "$TEMP_DEPLOYMENT"
+    sed -i 's|#   type: Directory|  type: Directory|g' "$TEMP_DEPLOYMENT"
+
+    # nodeSelector 활성화 (현재 호스트로 고정)
+    sed -i 's|# nodeSelector:|nodeSelector:|g' "$TEMP_DEPLOYMENT"
+    sed -i "s|#   kubernetes.io/hostname: genesis1|  kubernetes.io/hostname: $HOSTNAME|g" "$TEMP_DEPLOYMENT"
+fi
+
+kubectl apply -f "$TEMP_DEPLOYMENT"
+rm "$TEMP_DEPLOYMENT"
 
 kubectl apply -f manifests/service.yaml
 echo -e "${GREEN}✓ Deployment & Service 배포 완료${NC}"

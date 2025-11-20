@@ -106,6 +106,9 @@ USE_PVC=true ./scripts/deploy.sh v1.0.0
 # ServiceMonitor 포함 (Prometheus Operator 사용 시)
 DEPLOY_SERVICEMONITOR=true ./scripts/deploy.sh v1.0.0
 
+# 로컬 config.db 파일 마운트 (개발 전용!)
+USE_LOCAL_DB=true ./scripts/deploy.sh v1.0.0
+
 # 프라이빗 레지스트리 사용
 REGISTRY=myregistry.com ./scripts/deploy.sh v1.0.0
 
@@ -121,6 +124,12 @@ DEPLOY_SERVICEMONITOR=true \
 - `NAMESPACE`: 배포할 네임스페이스 (기본: monitoring)
 - `REGISTRY`: Docker 레지스트리 주소
 - `USE_PVC`: true 시 PVC 사용 (기본: false, emptyDir 사용)
+- `USE_LOCAL_DB`: true 시 로컬 config.db 파일 직접 마운트 (기본: false)
+  - ⚠️ **개발 전용!** 프로덕션 환경 사용 금지
+  - ⚠️ **보안 위험**: 호스트 파일시스템 직접 마운트
+  - ⚠️ **단일 노드 클러스터만 지원** (minikube, Docker Desktop, kind 등)
+  - ⚠️ **노드 고정**: Pod가 현재 호스트 노드에 자동으로 고정됨 (nodeSelector)
+  - ⚠️ **파일 권한**: Pod의 appuser(UID 1000)가 읽기/쓰기 가능해야 함
 - `DEPLOY_SERVICEMONITOR`: true 시 ServiceMonitor 배포 (기본: false)
 
 #### 배포 확인
