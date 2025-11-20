@@ -90,6 +90,128 @@ func GetManifests(c *gin.Context) {
 	c.String(http.StatusOK, yaml)
 }
 
+// GetKubernetesStatus handles GET /kubernetes/status
+func GetKubernetesStatus(c *gin.Context) {
+	if !kubernetes.IsInitialized() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "Kubernetes client not initialized",
+			"message": "Server not running in Kubernetes environment or kubeconfig not found",
+		})
+		return
+	}
+
+	namespace := c.DefaultQuery("namespace", "monitoring")
+
+	serverURL := os.Getenv("SERVER_URL")
+	if serverURL == "" {
+		serverURL = "http://localhost:8081"
+	}
+
+	status, err := kubernetes.GetSyncStatus(namespace, serverURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get status",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// SyncSingleDevice handles POST /kubernetes/sync/:device_id
+func SyncSingleDevice(c *gin.Context) {
+	if !kubernetes.IsInitialized() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "Kubernetes client not initialized",
+			"message": "Server not running in Kubernetes environment or kubeconfig not found",
+		})
+		return
+	}
+
+	deviceID := c.Param("device_id")
+	namespace := c.DefaultQuery("namespace", "monitoring")
+
+	serverURL := os.Getenv("SERVER_URL")
+	if serverURL == "" {
+		serverURL = "http://localhost:8081"
+	}
+
+	result, err := kubernetes.SyncSingleDevice(namespace, deviceID, serverURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Sync failed",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// GetDeviceResources handles GET /kubernetes/resources/:device_id
+func GetDeviceResources(c *gin.Context) {
+	if !kubernetes.IsInitialized() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "Kubernetes client not initialized",
+			"message": "Server not running in Kubernetes environment or kubeconfig not found",
+		})
+		return
+	}
+
+	deviceID := c.Param("device_id")
+	namespace := c.DefaultQuery("namespace", "monitoring")
+
+	resources, err := kubernetes.GetDeviceResources(namespace, deviceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get resources",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, resources)
+}
+
+// DeleteDeviceResources handles DELETE /kubernetes/resources/:device_id
+func DeleteDeviceResources(c *gin.Context) {
+	if !kubernetes.IsInitialized() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":   "Kubernetes client not initialized",
+			"message": "Server not running in Kubernetes environment or kubeconfig not found",
+		})
+		return
+	}
+
+	deviceID := c.Param("device_id")
+	namespace := c.DefaultQuery("namespace", "monitoring")
+
+	result, err := kubernetes.DeleteDeviceResources(namespace, deviceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Delete failed",
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// GetKubernetesHealth handles GET /kubernetes/health
+func GetKubernetesHealth(c *gin.Context) {
+	namespace := c.DefaultQuery("namespace", "monitoring")
+
+	health, err := kubernetes.CheckHealth(namespace)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, health)
+		return
+	}
+
+	c.JSON(http.StatusOK, health)
+}
+
 // CleanupKubernetes handles DELETE /kubernetes/cleanup
 func CleanupKubernetes(c *gin.Context) {
 	if !kubernetes.IsInitialized() {

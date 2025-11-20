@@ -81,6 +81,24 @@ func DeleteEndpoints(namespace, deviceID string) error {
 	return err
 }
 
+// GetEndpoints gets a Kubernetes Endpoints
+func GetEndpoints(namespace, deviceID string) (*corev1.Endpoints, error) {
+	if !IsInitialized() {
+		return nil, fmt.Errorf("kubernetes client not initialized")
+	}
+
+	endpointsName := fmt.Sprintf("edge-device-%s", deviceID)
+	ctx := context.Background()
+	client := GetClientset().CoreV1().Endpoints(namespace)
+
+	endpoints, err := client.Get(ctx, endpointsName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return endpoints, nil
+}
+
 // ListEdgeEndpoints lists all edge-device-* endpoints in a namespace
 func ListEdgeEndpoints(namespace string) ([]string, error) {
 	if !IsInitialized() {

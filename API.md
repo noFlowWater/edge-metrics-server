@@ -551,6 +551,102 @@ curl http://localhost:8081/metrics/summary
 
 ## Kubernetes Integration
 
+### GET /kubernetes/status
+
+전체 Kubernetes 동기화 상태를 조회합니다.
+
+**Request**
+```
+GET /kubernetes/status?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| namespace | string | query | monitoring | 조회할 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "kubernetes_enabled": true,
+  "namespace": "monitoring",
+  "total_k8s_resources": 5,
+  "total_registered_devices": 7,
+  "synced": 5,
+  "unsynced": 2,
+  "resources": [
+    {
+      "device_id": "edge-01",
+      "service_exists": true,
+      "endpoints_exists": true
+    },
+    {
+      "device_id": "edge-02",
+      "service_exists": false,
+      "endpoints_exists": false
+    }
+  ]
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Kubernetes client not initialized",
+  "message": "Server not running in Kubernetes environment or kubeconfig not found"
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/kubernetes/status?namespace=monitoring
+```
+
+---
+
+### GET /kubernetes/health
+
+Kubernetes 연결 상태 및 RBAC 권한을 확인합니다.
+
+**Request**
+```
+GET /kubernetes/health?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| namespace | string | query | monitoring | 확인할 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "kubernetes_available": true,
+  "client_initialized": true,
+  "namespace_accessible": true,
+  "rbac_permissions": {
+    "namespace": "ok",
+    "services": "ok",
+    "endpoints": "ok"
+  }
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "kubernetes_available": false,
+  "client_initialized": false,
+  "namespace_accessible": false,
+  "rbac_permissions": {}
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/kubernetes/health
+```
+
+---
+
 ### POST /kubernetes/sync
 
 현재 healthy 상태인 모든 디바이스를 Kubernetes Service + Endpoints로 동기화합니다.
@@ -620,6 +716,54 @@ curl -X POST http://localhost:8081/kubernetes/sync \
    - 레이블: `app=edge-exporter`, `device_id`, `device_type`, `managed_by=edge-metrics-server`
 3. DB에는 있지만 unhealthy하거나 삭제된 디바이스의 리소스는 삭제
 4. 결과 반환
+
+---
+
+### POST /kubernetes/sync/{device_id}
+
+특정 디바이스만 Kubernetes에 동기화합니다.
+
+**Request**
+```
+POST /kubernetes/sync/{device_id}?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| device_id | string | path | - | 동기화할 디바이스 ID |
+| namespace | string | query | monitoring | 동기화 대상 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "device_id": "edge-01",
+  "service": "edge-device-edge-01",
+  "status": "created"
+}
+```
+
+**Response (200 OK - Failed)**
+```json
+{
+  "device_id": "edge-01",
+  "service": "edge-device-edge-01",
+  "status": "failed",
+  "error": "device is not healthy"
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Kubernetes client not initialized",
+  "message": "Server not running in Kubernetes environment or kubeconfig not found"
+}
+```
+
+**Example**
+```bash
+curl -X POST http://localhost:8081/kubernetes/sync/edge-01?namespace=monitoring
+```
 
 ---
 
@@ -694,6 +838,108 @@ kubectl apply -f edge-devices.yaml
 2. 각 디바이스의 health 체크
 3. Healthy 디바이스들만 YAML 매니페스트 생성
 4. text/plain으로 반환
+
+---
+
+### GET /kubernetes/resources/{device_id}
+
+특정 디바이스의 Kubernetes 리소스 상세 정보를 조회합니다.
+
+**Request**
+```
+GET /kubernetes/resources/{device_id}?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| device_id | string | path | - | 조회할 디바이스 ID |
+| namespace | string | query | monitoring | 조회할 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "device_id": "edge-01",
+  "service": {
+    "name": "edge-device-edge-01",
+    "exists": true,
+    "cluster_ip": "None",
+    "ports": [
+      {
+        "name": "metrics",
+        "port": 9100
+      }
+    ]
+  },
+  "endpoints": {
+    "name": "edge-device-edge-01",
+    "exists": true,
+    "ready_addresses": ["192.168.1.10:9100"],
+    "not_ready_addresses": []
+  },
+  "prometheus_target": "http://edge-device-edge-01.monitoring.svc:9100/metrics"
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Kubernetes client not initialized",
+  "message": "Server not running in Kubernetes environment or kubeconfig not found"
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/kubernetes/resources/edge-01?namespace=monitoring
+```
+
+---
+
+### DELETE /kubernetes/resources/{device_id}
+
+특정 디바이스의 Kubernetes 리소스를 삭제합니다.
+
+**Request**
+```
+DELETE /kubernetes/resources/{device_id}?namespace=monitoring
+```
+
+| Parameter | Type | Location | Default | Description |
+|-----------|------|----------|---------|-------------|
+| device_id | string | path | - | 삭제할 디바이스 ID |
+| namespace | string | query | monitoring | 삭제할 네임스페이스 |
+
+**Response (200 OK)**
+```json
+{
+  "device_id": "edge-01",
+  "service": "edge-device-edge-01",
+  "status": "deleted"
+}
+```
+
+**Response (200 OK - Failed)**
+```json
+{
+  "device_id": "edge-01",
+  "service": "edge-device-edge-01",
+  "status": "failed",
+  "error": "delete service: services \"edge-device-edge-01\" not found"
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Kubernetes client not initialized",
+  "message": "Server not running in Kubernetes environment or kubeconfig not found"
+}
+```
+
+**Example**
+```bash
+curl -X DELETE http://localhost:8081/kubernetes/resources/edge-01?namespace=monitoring
+```
 
 ---
 

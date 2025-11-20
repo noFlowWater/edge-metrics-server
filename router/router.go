@@ -26,8 +26,13 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/metrics/summary", handlers.GetMetricsSummary)
 
 	// Kubernetes routes
+	r.GET("/kubernetes/status", handlers.GetKubernetesStatus)
+	r.GET("/kubernetes/health", handlers.GetKubernetesHealth)
 	r.POST("/kubernetes/sync", handlers.SyncKubernetes)
+	r.POST("/kubernetes/sync/:device_id", handlers.SyncSingleDevice)
 	r.GET("/kubernetes/manifests", handlers.GetManifests)
+	r.GET("/kubernetes/resources/:device_id", handlers.GetDeviceResources)
+	r.DELETE("/kubernetes/resources/:device_id", handlers.DeleteDeviceResources)
 	r.DELETE("/kubernetes/cleanup", handlers.CleanupKubernetes)
 
 	// Health route

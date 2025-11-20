@@ -78,6 +78,24 @@ func DeleteService(namespace, deviceID string) error {
 	return err
 }
 
+// GetService gets a Kubernetes Service
+func GetService(namespace, deviceID string) (*corev1.Service, error) {
+	if !IsInitialized() {
+		return nil, fmt.Errorf("kubernetes client not initialized")
+	}
+
+	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	ctx := context.Background()
+	client := GetClientset().CoreV1().Services(namespace)
+
+	service, err := client.Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	return service, nil
+}
+
 // ListEdgeServices lists all edge-device-* services in a namespace
 func ListEdgeServices(namespace string) ([]string, error) {
 	if !IsInitialized() {
