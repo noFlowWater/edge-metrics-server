@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"edge-metrics-server/models"
@@ -70,7 +71,7 @@ func SyncDevices(namespace, serverURL string) (*SyncResponse, error) {
 			continue
 		}
 
-		serviceName := fmt.Sprintf("edge-device-%s", device.DeviceID)
+		serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(device.DeviceID))
 		wasExisting := existingMap[serviceName]
 		delete(existingMap, serviceName) // Mark as processed
 
@@ -273,7 +274,7 @@ func GetSyncStatus(namespace, serverURL string) (*SyncStatusResponse, error) {
 
 	synced := 0
 	for _, device := range devices {
-		serviceName := fmt.Sprintf("edge-device-%s", device.DeviceID)
+		serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(device.DeviceID))
 		serviceExists := serviceMap[serviceName]
 		endpointsExists := endpointMap[serviceName]
 
@@ -322,7 +323,7 @@ func SyncSingleDevice(namespace, deviceID, serverURL string) (*SyncResult, error
 		}, nil
 	}
 
-	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(deviceID))
 
 	// Check if service exists
 	services, _ := ListEdgeServices(namespace)
@@ -374,7 +375,7 @@ func GetDeviceResources(namespace, deviceID string) (*DeviceResourceDetail, erro
 		return nil, fmt.Errorf("kubernetes client not initialized")
 	}
 
-	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(deviceID))
 
 	detail := &DeviceResourceDetail{
 		DeviceID: deviceID,
@@ -434,7 +435,7 @@ func DeleteDeviceResources(namespace, deviceID string) (*SyncResult, error) {
 		return nil, fmt.Errorf("kubernetes client not initialized")
 	}
 
-	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(deviceID))
 
 	// Delete Service
 	err := DeleteService(namespace, deviceID)

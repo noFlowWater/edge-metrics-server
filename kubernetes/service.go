@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -16,7 +17,7 @@ func CreateOrUpdateService(namespace, deviceID, deviceType string, port int) err
 		return fmt.Errorf("kubernetes client not initialized")
 	}
 
-	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(deviceID))
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -67,7 +68,7 @@ func DeleteService(namespace, deviceID string) error {
 		return fmt.Errorf("kubernetes client not initialized")
 	}
 
-	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(deviceID))
 	ctx := context.Background()
 	client := GetClientset().CoreV1().Services(namespace)
 
@@ -84,7 +85,7 @@ func GetService(namespace, deviceID string) (*corev1.Service, error) {
 		return nil, fmt.Errorf("kubernetes client not initialized")
 	}
 
-	serviceName := fmt.Sprintf("edge-device-%s", deviceID)
+	serviceName := fmt.Sprintf("edge-device-%s", strings.ToLower(deviceID))
 	ctx := context.Background()
 	client := GetClientset().CoreV1().Services(namespace)
 
