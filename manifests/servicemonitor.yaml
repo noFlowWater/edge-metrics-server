@@ -10,6 +10,7 @@ metadata:
   labels:
     app: edge-metrics
     prometheus: kube-prometheus
+    release: monitoring
 spec:
   # app=edge-exporter 레이블을 가진 모든 Service를 자동 감지
   selector:
@@ -17,7 +18,7 @@ spec:
       app: edge-exporter
   endpoints:
   - port: metrics
-    interval: 30s
+    interval: 1s
     path: /metrics
     # 타임아웃 설정 (선택)
     # scrapeTimeout: 10s
