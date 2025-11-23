@@ -1108,6 +1108,220 @@ PORT=8080 DB_PATH=/data/config.db ./edge-metrics-server
 
 ---
 
+## Grafana Visualization
+
+### Overview
+
+Grafana 대시보드를 통해 엣지 디바이스의 전력 메트릭을 실시간으로 시각화하고, 특정 시간 범위의 에너지 사용량 통계를 분석할 수 있습니다.
+
+### Accessing Grafana
+
+Grafana는 kube-prometheus-stack을 통해 monitoring 네임스페이스에 설치되어 있습니다.
+
+**NodePort 접속 (외부에서 접속)**
+```bash
+# NodePort 확인
+kubectl get svc -n monitoring monitoring-grafana
+
+# 브라우저에서 접속
+http://<NodeIP>:31932
+```
+
+**Port Forward 접속 (로컬에서 접속)**
+```bash
+kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
+
+# 브라우저에서 접속
+http://localhost:3000
+```
+
+**기본 로그인 정보**
+- Username: `admin`
+- Password: `prom-operator` (kube-prometheus-stack 기본값)
+
+### Dashboard Import
+
+**방법 1: JSON 파일로 Import**
+
+1. Grafana에 로그인
+2. 왼쪽 메뉴에서 `Dashboards` → `Import` 클릭
+3. `Upload JSON file` 선택
+4. `manifests/grafana-dashboard.json` 파일 업로드
+5. Prometheus 데이터소스 선택 (기본: `prometheus`)
+6. `Import` 버튼 클릭
+
+**방법 2: JSON 내용 직접 붙여넣기**
+
+1. `manifests/grafana-dashboard.json` 파일 내용 복사
+2. Grafana에서 `Dashboards` → `Import` → `Import via panel json`
+3. JSON 내용 붙여넣기
+4. `Load` → `Import` 클릭
+
+### Dashboard Panels
+
+**1. 실시간 전력 메트릭 (Real-time Power Metrics)**
+- 모든 디바이스의 전력 메트릭을 시계열 그래프로 표시
+- 디바이스 타입별 필터링 가능 (`$device_type` 변수)
+- 호스트명 필터링 가능 (`$hostname` 변수)
+- Legend에 Last, Mean, Max 값 표시
+
+**2. 총 에너지 사용량 (Total Energy Usage)**
+- 선택한 시간 범위 내의 총 에너지 사용량 (Wh)
+- 디바이스 타입별 (Xavier, Nano, Orin) 집계
+- Stat 패널로 표시
+
+**3. 평균/최대/최소 전력 (Average/Max/Min Power)**
+- 선택한 시간 범위의 통계값
+- 워크로드 분석 시 유용
+
+**4. 디바이스별 에너지 사용 비율 (Energy Usage by Device)**
+- Pie Chart로 디바이스별 에너지 사용 비중 표시
+- 호스트명별 비교
+
+**5. 디바이스별 전력/에너지 통계 (Power/Energy Statistics)**
+- Table 형식으로 모든 통계를 한눈에 확인
+- 디바이스별 평균/최대/최소 전력 및 총 에너지
+
+### Dashboard Variables
+
+대시보드 상단의 변수 선택기를 통해 필터링 가능:
+
+- `$device_type`: 디바이스 타입 선택 (jetson_xavier, jetson_nano, jetson_orin)
+- `$hostname`: 호스트명 선택 (V2X-GATEWAY, nano, orin-desktop 등)
+- 기본값: `All` (모든 디바이스 표시)
+
+### PromQL Query Examples
+
+**실시간 전력 (Xavier)**
+```promql
+jetson_power_vdd_in_watts{device_type="jetson_xavier"}
+```
+
+**시간 범위 내 총 에너지 (Nano)**
+```promql
+sum(increase(jetson_power_pom_5v_in_watts{device_type="jetson_nano"}[$__range]) * $__range_s / 3600)
+```
+
+**평균 전력 (Orin)**
+```promql
+avg_over_time(jetson_power_vdd_gpu_soc_watts{device_type="jetson_orin"}[$__range]) +
+avg_over_time(jetson_power_vdd_cpu_cv_watts{device_type="jetson_orin"}[$__range]) +
+avg_over_time(jetson_power_vin_sys_5v0_watts{device_type="jetson_orin"}[$__range])
+```
+
+**디바이스별 에너지 합계**
+```promql
+sum by (hostname) (increase(jetson_power_vdd_in_watts[$__range]) * $__range_s / 3600)
+```
+
+### Workload Analysis Guide
+
+워크로드별 에너지 절감 효율을 검증하는 방법:
+
+**1. 워크로드 실행 전 시간 기록**
+```bash
+# 워크로드 시작 시간
+START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo "Workload started at: $START_TIME"
+```
+
+**2. 워크로드 실행**
+```bash
+# 예시: AI 추론 작업
+python inference.py
+```
+
+**3. 워크로드 종료 후 시간 기록**
+```bash
+# 워크로드 종료 시간
+END_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+echo "Workload ended at: $END_TIME"
+```
+
+**4. Grafana에서 분석**
+
+- 대시보드 상단 Time Range에서 Custom Range 선택
+- From: `$START_TIME`, To: `$END_TIME` 입력
+- 또는 Absolute time range로 직접 지정
+
+**5. 에너지 사용량 확인**
+
+- "총 에너지 사용량" 패널에서 해당 구간의 에너지 확인 (Wh)
+- "평균 전력" 패널에서 평균 전력 확인 (W)
+- "최대 전력" 패널에서 피크 전력 확인 (W)
+
+**6. 워크로드 비교**
+
+예시: 두 가지 AI 모델의 에너지 효율 비교
+```bash
+# Model A 실행 (10:00:00 ~ 10:05:00)
+# Grafana에서 확인: 5.2 Wh, 평균 3.8W
+
+# Model B 실행 (10:10:00 ~ 10:15:00)
+# Grafana에서 확인: 4.1 Wh, 평균 3.2W
+
+# 결론: Model B가 21% 더 에너지 효율적
+```
+
+### Tips
+
+**자동 새로고침 설정**
+- 대시보드 우측 상단의 Refresh 주기 설정: `5s`, `10s`, `30s` 등
+- 실시간 모니터링 시 유용
+
+**시간 범위 단축키**
+- `t z`: Zoom out time range
+- `Ctrl + Z`: Zoom to data
+- 드래그로 특정 구간 선택 가능
+
+**Annotation 추가**
+- 워크로드 시작/종료 시점에 Annotation 추가
+- 대시보드 설정 → Annotations → `+Add annotation query`
+- 수동으로 마커 추가 가능
+
+**Dashboard Export**
+```bash
+# Dashboard를 JSON으로 저장 (백업용)
+# Grafana UI에서: Dashboard settings → JSON Model → Copy to Clipboard
+```
+
+### Troubleshooting
+
+**메트릭이 표시되지 않는 경우**
+
+1. Prometheus가 메트릭을 수집하고 있는지 확인
+```bash
+# Prometheus Targets 확인
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+# http://localhost:9090/targets 열기
+```
+
+2. ServiceMonitor가 정상 동작하는지 확인
+```bash
+kubectl get servicemonitor -n monitoring edge-devices
+kubectl describe servicemonitor -n monitoring edge-devices
+```
+
+3. 디바이스가 healthy 상태인지 확인
+```bash
+curl http://edge-metrics-server:8081/devices
+```
+
+**"No data" 에러**
+
+- 선택한 시간 범위에 데이터가 없을 수 있음
+- 디바이스 변수 (`$device_type`, `$hostname`)가 올바른지 확인
+- Prometheus 데이터소스가 올바르게 설정되었는지 확인
+
+**에너지 계산 값이 이상한 경우**
+
+- `$__range_s` 변수는 선택한 시간 범위(초)를 의미
+- 에너지(Wh) = 전력(W) × 시간(h)
+- PromQL의 `increase()` 함수는 Counter 메트릭에만 사용 가능
+- Gauge 메트릭의 경우 `avg_over_time() * time_range` 사용
+
+---
+
 ## Client Integration
 
 ### Exporter Auto-Registration Flow
