@@ -5,25 +5,18 @@ import (
 	"edge-metrics-server/models"
 	"edge-metrics-server/repository"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// isLocalhost checks if the IP is a localhost address
-func isLocalhost(ip string) bool {
-	return ip == "127.0.0.1" || ip == "::1"
-}
-
-// resolveIPAddress determines the IP address to save
-// Preserves existing real IP when request comes from localhost
-func resolveIPAddress(clientIP string, existingIP string) string {
-	if isLocalhost(clientIP) && existingIP != "" && !isLocalhost(existingIP) {
-		return existingIP
-	}
-	return clientIP
+// isValidIP validates if a string is a valid IP address
+func isValidIP(ip string) bool {
+	return net.ParseIP(ip) != nil
 }
 
 // GetConfig handles GET /config/:device_id
@@ -123,6 +116,7 @@ func UpdateConfig(c *gin.Context) {
 		"port":            true,
 		"reload_port":     true,
 		"enabled_metrics": true,
+		"ip_address":      true,
 	}
 
 	config.ExtraConfig = make(map[string]interface{})
@@ -140,12 +134,26 @@ func UpdateConfig(c *gin.Context) {
 		config.ReloadPort = 9101
 	}
 
-	// Save client IP address (preserve existing if updating from localhost)
-	existingIP := ""
-	if existing, _ := repository.GetByDeviceID(deviceID); existing != nil {
-		existingIP = existing.IPAddress
+	// Handle IP address: if provided, validate it; otherwise preserve existing
+	if ipAddress, ok := rawData["ip_address"].(string); ok {
+		config.IPAddress = ipAddress
 	}
-	config.IPAddress = resolveIPAddress(c.ClientIP(), existingIP)
+
+	// If no IP provided, preserve existing IP
+	if config.IPAddress == "" {
+		if existing, _ := repository.GetByDeviceID(deviceID); existing != nil {
+			config.IPAddress = existing.IPAddress
+		}
+	} else {
+		// If IP provided, validate it
+		if !isValidIP(config.IPAddress) {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{
+				Error:   "invalid_ip_address",
+				Message: fmt.Sprintf("Invalid IP address format: %s", config.IPAddress),
+			})
+			return
+		}
+	}
 
 	created, err := repository.Upsert(deviceID, &config)
 	if err != nil {
@@ -252,6 +260,7 @@ func CreateConfig(c *gin.Context) {
 		"port":            true,
 		"reload_port":     true,
 		"enabled_metrics": true,
+		"ip_address":      true,
 	}
 
 	config.ExtraConfig = make(map[string]interface{})
@@ -261,6 +270,29 @@ func CreateConfig(c *gin.Context) {
 		}
 	}
 
+	// Extract and validate IP address (required field)
+	if ipAddress, ok := rawData["ip_address"].(string); ok {
+		config.IPAddress = ipAddress
+	}
+
+	// IP address is required
+	if config.IPAddress == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "ip_address_required",
+			Message: "Device IP address must be specified in configuration",
+		})
+		return
+	}
+
+	// Validate IP address format
+	if !isValidIP(config.IPAddress) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_ip_address",
+			Message: fmt.Sprintf("Invalid IP address format: %s", config.IPAddress),
+		})
+		return
+	}
+
 	// Set defaults
 	if config.Port == 0 {
 		config.Port = 9100
@@ -268,10 +300,6 @@ func CreateConfig(c *gin.Context) {
 	if config.ReloadPort == 0 {
 		config.ReloadPort = 9101
 	}
-
-	// Save client IP address
-	clientIP := c.ClientIP()
-	config.IPAddress = clientIP
 
 	err = repository.Create(&config)
 	if err != nil {
@@ -604,12 +632,30 @@ func PatchConfig(c *gin.Context) {
 		}
 	}
 
+	// Handle IP address patch
+	if val, exists := patchData["ip_address"]; exists {
+		if val == nil {
+			// null value - keep existing IP
+		} else if s, ok := val.(string); ok {
+			// Validate IP before updating
+			if !isValidIP(s) {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{
+					Error:   "invalid_ip_address",
+					Message: fmt.Sprintf("Invalid IP address format: %s", s),
+				})
+				return
+			}
+			existing.IPAddress = s
+		}
+	}
+
 	// Handle extra config patches
 	standardFields := map[string]bool{
 		"device_type":     true,
 		"port":            true,
 		"reload_port":     true,
 		"enabled_metrics": true,
+		"ip_address":      true,
 	}
 
 	if existing.ExtraConfig == nil {
@@ -626,9 +672,6 @@ func PatchConfig(c *gin.Context) {
 			}
 		}
 	}
-
-	// Update IP address (preserve existing if updating from localhost)
-	existing.IPAddress = resolveIPAddress(c.ClientIP(), existing.IPAddress)
 
 	// Save updated config
 	err = repository.Update(deviceID, existing)
@@ -703,6 +746,172 @@ func GetMetricsSummary(c *gin.Context) {
 		"healthy":        healthy,
 		"unhealthy":      unhealthy,
 		"by_device_type": typeCount,
+	})
+}
+
+// GetDeviceLocalConfig handles GET /devices/:device_id/local-config
+// Proxy endpoint to fetch device's local config.yaml through server (avoids CORS)
+func GetDeviceLocalConfig(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Local config request for device: %s", deviceID)
+
+	device, err := repository.GetByDeviceID(deviceID)
+	if err != nil {
+		log.Printf("Error fetching device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch device",
+		})
+		return
+	}
+
+	if device == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:    "Device not found",
+			DeviceID: deviceID,
+		})
+		return
+	}
+
+	if device.IPAddress == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:    "No IP address",
+			DeviceID: deviceID,
+			Message:  "Device has no IP address configured",
+		})
+		return
+	}
+
+	// Fetch local config from device
+	configURL := fmt.Sprintf("http://%s:%d/config", device.IPAddress, device.ReloadPort)
+	log.Printf("Fetching local config from: %s", configURL)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(configURL)
+	if err != nil {
+		log.Printf("Failed to fetch local config from %s: %v", configURL, err)
+		c.JSON(http.StatusServiceUnavailable, models.ErrorResponse{
+			Error:    "Device unreachable",
+			DeviceID: deviceID,
+			Message:  fmt.Sprintf("Failed to connect to device: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Device returned non-OK status: %d", resp.StatusCode)
+		c.JSON(http.StatusBadGateway, models.ErrorResponse{
+			Error:    "Device error",
+			DeviceID: deviceID,
+			Message:  fmt.Sprintf("Device returned HTTP %d", resp.StatusCode),
+		})
+		return
+	}
+
+	// Proxy the response
+	c.Header("Content-Type", "application/json")
+	c.Status(http.StatusOK)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		log.Printf("Error copying response body: %v", err)
+	}
+}
+
+// PatchDevice handles PATCH /devices/:device_id
+// Updates only basic device information (device_type, ip_address, port, reload_port)
+// Does NOT trigger reload on the device
+func PatchDevice(c *gin.Context) {
+	deviceID := c.Param("device_id")
+	log.Printf("Patch device basic info request for: %s", deviceID)
+
+	// Check if device exists
+	existing, err := repository.GetByDeviceID(deviceID)
+	if err != nil {
+		log.Printf("Error fetching device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to fetch device",
+		})
+		return
+	}
+
+	if existing == nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:    "Device not found",
+			DeviceID: deviceID,
+		})
+		return
+	}
+
+	// Parse patch data
+	var patchData map[string]interface{}
+	if err := c.ShouldBindJSON(&patchData); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "Invalid request body",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Apply patches - only allow device_type, ip_address, port, reload_port
+	if val, exists := patchData["device_type"]; exists {
+		if s, ok := val.(string); ok && s != "" {
+			existing.DeviceType = s
+		}
+	}
+
+	if val, exists := patchData["ip_address"]; exists {
+		if s, ok := val.(string); ok {
+			if s == "" {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{
+					Error:   "invalid_ip_address",
+					Message: "IP address cannot be empty",
+				})
+				return
+			}
+			// Validate IP before updating
+			if !isValidIP(s) {
+				c.JSON(http.StatusBadRequest, models.ErrorResponse{
+					Error:   "invalid_ip_address",
+					Message: fmt.Sprintf("Invalid IP address format: %s", s),
+				})
+				return
+			}
+			existing.IPAddress = s
+		}
+	}
+
+	if val, exists := patchData["port"]; exists {
+		if f, ok := val.(float64); ok {
+			existing.Port = int(f)
+		}
+	}
+
+	if val, exists := patchData["reload_port"]; exists {
+		if f, ok := val.(float64); ok {
+			existing.ReloadPort = int(f)
+		}
+	}
+
+	// Ignore any other fields (enabled_metrics, extra_config, etc.)
+
+	// Save updated config
+	err = repository.Update(deviceID, existing)
+	if err != nil {
+		log.Printf("Error updating device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
+			Error:   "Internal server error",
+			Message: "Failed to update device",
+		})
+		return
+	}
+
+	log.Printf("Updated basic info for device: %s (reload NOT triggered)", deviceID)
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "updated",
+		"device_id": deviceID,
+		"message":   "Device basic information updated (reload not triggered)",
 	})
 }
 

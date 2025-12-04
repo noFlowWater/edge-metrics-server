@@ -8,7 +8,7 @@ type DeviceConfig struct {
 	ReloadPort     int                    `json:"reload_port,omitempty"`
 	EnabledMetrics []string               `json:"enabled_metrics,omitempty"`
 	ExtraConfig    map[string]interface{} `json:"-"` // Device-specific config (shelly, jetson, ina260, etc.)
-	IPAddress      string                 `json:"ip_address,omitempty"`
+	IPAddress      string                 `json:"ip_address"`
 }
 
 // DeviceStatus represents a device with its health status

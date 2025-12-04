@@ -20,6 +20,8 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/devices", handlers.ListDevices)
 	r.POST("/devices/reload", handlers.ReloadAllDevices)
 	r.GET("/devices/:device_id/status", handlers.GetDeviceStatus)
+	r.PATCH("/devices/:device_id", handlers.PatchDevice)
+	r.GET("/devices/:device_id/local-config", handlers.GetDeviceLocalConfig)
 	r.POST("/devices/:device_id/reload", handlers.ReloadDevice)
 
 	// Metrics routes

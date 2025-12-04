@@ -113,6 +113,7 @@ Content-Type: application/json
 ```json
 {
   "device_type": "jetson_orin",
+  "ip_address": "155.230.34.203",
   "port": 9100,
   "reload_port": 9101,
   "enabled_metrics": [
@@ -127,6 +128,7 @@ Content-Type: application/json
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | device_type | string | **Yes** | - | 디바이스 타입 |
+| ip_address | string | No | 기존 IP 유지 | 디바이스 IP 주소 (미제공 시 기존 IP 유지) |
 | port | integer | No | 9100 | Prometheus 메트릭 서버 포트 |
 | reload_port | integer | No | 9101 | 설정 리로드 트리거 포트 |
 | enabled_metrics | array | No | null | 수집할 메트릭 목록 (null=전체) |
@@ -160,12 +162,20 @@ Content-Type: application/json
 }
 ```
 
+```json
+{
+  "error": "invalid_ip_address",
+  "message": "Invalid IP address format: not_an_ip"
+}
+```
+
 **Example - 새 디바이스 등록**
 ```bash
 curl -X PUT http://localhost:8081/config/orin-desktop \
   -H "Content-Type: application/json" \
   -d '{
     "device_type": "jetson_orin",
+    "ip_address": "155.230.34.203",
     "jetson": {"use_tegrastats": true}
   }'
 ```
@@ -190,16 +200,41 @@ Content-Type: application/json
 ```json
 {
   "device_type": "jetson_orin",
+  "ip_address": "155.230.34.203",
   "port": 9100,
   "reload_port": 9101
 }
 ```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| device_type | string | **Yes** | - | 디바이스 타입 |
+| ip_address | string | **Yes** | - | 디바이스 IP 주소 |
+| port | integer | No | 9100 | Prometheus 메트릭 서버 포트 |
+| reload_port | integer | No | 9101 | 설정 리로드 트리거 포트 |
+| enabled_metrics | array | No | null | 수집할 메트릭 목록 |
+| * | object | No | - | 디바이스별 추가 설정 (shelly, jetson 등) |
 
 **Response (201 Created)**
 ```json
 {
   "status": "created",
   "device_id": "new-device"
+}
+```
+
+**Response (400 Bad Request)**
+```json
+{
+  "error": "ip_address_required",
+  "message": "Device IP address must be specified in configuration"
+}
+```
+
+```json
+{
+  "error": "invalid_ip_address",
+  "message": "Invalid IP address format: not_an_ip"
 }
 ```
 
@@ -216,7 +251,10 @@ Content-Type: application/json
 ```bash
 curl -X POST http://localhost:8081/config/new-device \
   -H "Content-Type: application/json" \
-  -d '{"device_type": "raspberry_pi"}'
+  -d '{
+    "device_type": "raspberry_pi",
+    "ip_address": "155.230.34.205"
+  }'
 ```
 
 ---
@@ -242,7 +280,14 @@ Content-Type: application/json
 }
 ```
 
-> 변경하고자 하는 필드만 포함하면 됩니다. `null`을 전달하면 필드를 기본값으로 리셋하거나 삭제합니다.
+또는 IP 주소 변경:
+```json
+{
+  "ip_address": "155.230.34.210"
+}
+```
+
+> 변경하고자 하는 필드만 포함하면 됩니다. `null`을 전달하면 필드를 기본값으로 리셋하거나 삭제합니다. (단, `ip_address`는 `null`이어도 기존 IP 유지)
 
 **Response (200 OK)**
 ```json
@@ -250,6 +295,14 @@ Content-Type: application/json
   "status": "patched",
   "device_id": "edge-01",
   "reload_triggered": true
+}
+```
+
+**Response (400 Bad Request)**
+```json
+{
+  "error": "invalid_ip_address",
+  "message": "Invalid IP address format: not_an_ip"
 }
 ```
 
@@ -264,9 +317,15 @@ Content-Type: application/json
 
 **Example**
 ```bash
+# 포트 변경
 curl -X PATCH http://localhost:8081/config/edge-01 \
   -H "Content-Type: application/json" \
   -d '{"port": 9200}'
+
+# IP 주소 변경
+curl -X PATCH http://localhost:8081/config/edge-01 \
+  -H "Content-Type: application/json" \
+  -d '{"ip_address": "155.230.34.210"}'
 ```
 
 ---
@@ -434,6 +493,157 @@ GET /devices/{device_id}/status
 **Example**
 ```bash
 curl http://localhost:8081/devices/edge-01/status
+```
+
+---
+
+### PATCH /devices/{device_id}
+
+디바이스의 기본 정보만 수정합니다 (device_type, ip_address, port, reload_port).
+이 API는 데이터베이스만 업데이트하고 디바이스 reload는 트리거하지 않습니다.
+
+**수정 가능한 필드**: device_type, ip_address, port, reload_port
+**수정 불가능한 필드**: enabled_metrics, extra_config (jetson, shelly 등)
+
+**Request**
+```
+PATCH /devices/{device_id}
+```
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| device_id | string | path | 디바이스 hostname |
+
+**Request Body**
+```json
+{
+  "device_type": "jetson_orin",
+  "ip_address": "192.168.1.20",
+  "port": 9100,
+  "reload_port": 9101
+}
+```
+
+모든 필드는 선택적입니다. 제공된 필드만 업데이트됩니다.
+
+**Response (200 OK)**
+```json
+{
+  "status": "updated",
+  "device_id": "edge-01",
+  "message": "Device basic information updated (reload not triggered)"
+}
+```
+
+**Response (404 Not Found)**
+```json
+{
+  "error": "Device not found",
+  "device_id": "unknown-device"
+}
+```
+
+**Response (400 Bad Request - Invalid IP)**
+```json
+{
+  "error": "invalid_ip_address",
+  "message": "Invalid IP address format: 192.168.1.999"
+}
+```
+
+**Example**
+```bash
+# IP 주소만 변경
+curl -X PATCH http://localhost:8081/devices/edge-01 \
+  -H "Content-Type: application/json" \
+  -d '{"ip_address": "192.168.1.20"}'
+
+# 여러 필드 동시 변경
+curl -X PATCH http://localhost:8081/devices/edge-01 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_type": "jetson_orin",
+    "ip_address": "192.168.1.25",
+    "port": 9100,
+    "reload_port": 9101
+  }'
+```
+
+**기존 API와의 차이점**
+- `PATCH /config/{device_id}`: 모든 필드 수정 가능, reload 트리거 O
+- `PATCH /devices/{device_id}`: 기본 필드만 수정 가능, reload 트리거 X
+
+---
+
+### GET /devices/{device_id}/local-config
+
+디바이스의 로컬 config.yaml 파일 내용을 조회합니다.
+서버가 디바이스의 `GET :9101/config` 엔드포인트를 프록시하여 CORS 이슈를 해결합니다.
+
+**Request**
+```
+GET /devices/{device_id}/local-config
+```
+
+| Parameter | Type | Location | Description |
+|-----------|------|----------|-------------|
+| device_id | string | path | 디바이스 hostname |
+
+**Response (200 OK)**
+```json
+{
+  "device_type": "jetson_orin",
+  "port": 9100,
+  "reload_port": 9101,
+  "interval": 10,
+  "metrics": {
+    "jetson_power_vdd_gpu_soc_watts": true,
+    "jetson_power_vdd_cpu_cv_watts": true
+  },
+  "jetson": {
+    "model": "NVIDIA Jetson AGX Orin"
+  }
+}
+```
+
+**Response (404 Not Found)**
+```json
+{
+  "error": "Device not found",
+  "device_id": "unknown-device"
+}
+```
+
+**Response (400 Bad Request)**
+```json
+{
+  "error": "No IP address",
+  "device_id": "edge-01",
+  "message": "Device has no IP address configured"
+}
+```
+
+**Response (503 Service Unavailable)**
+```json
+{
+  "error": "Device unreachable",
+  "device_id": "edge-01",
+  "message": "Failed to connect to device: connection refused"
+}
+```
+
+**Response (502 Bad Gateway)**
+```json
+{
+  "error": "Device error",
+  "device_id": "edge-01",
+  "message": "Device returned HTTP 500"
+}
+```
+
+**Example**
+```bash
+curl http://localhost:8081/devices/edge-01/local-config
 ```
 
 ---
@@ -1062,10 +1272,21 @@ curl -X DELETE http://localhost:8081/kubernetes/cleanup?namespace=monitoring
 |-------------|-------------|
 | 200 | 성공 |
 | 201 | 생성됨 (POST) |
-| 400 | 잘못된 요청 (필수 필드 누락, 잘못된 JSON) |
+| 400 | 잘못된 요청 (필수 필드 누락, 잘못된 JSON, 잘못된 IP 주소) |
 | 404 | 디바이스를 찾을 수 없음 |
 | 409 | 충돌 (이미 존재하는 디바이스) |
 | 500 | 서버 내부 오류 |
+
+**주요 에러 타입:**
+
+| Error Code | Description | HTTP Status |
+|------------|-------------|-------------|
+| `Missing required field` | 필수 필드 누락 (device_type) | 400 |
+| `ip_address_required` | IP 주소 필수 (POST 요청 시) | 400 |
+| `invalid_ip_address` | 잘못된 IP 주소 형식 | 400 |
+| `Device already exists` | 이미 존재하는 디바이스 (POST) | 409 |
+| `Device not found` | 디바이스를 찾을 수 없음 | 404 |
+| `Internal server error` | 서버 내부 오류 | 500 |
 
 ---
 
@@ -1079,7 +1300,7 @@ CREATE TABLE devices (
     reload_port INTEGER DEFAULT 9101,
     enabled_metrics TEXT,    -- JSON array
     extra_config TEXT,       -- JSON object
-    ip_address TEXT,         -- Auto-detected from request
+    ip_address TEXT,         -- User-provided device IP address
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -1108,241 +1329,54 @@ PORT=8080 DB_PATH=/data/config.db ./edge-metrics-server
 
 ---
 
-## Grafana Visualization
+## Grafana Dashboards
 
-### Overview
+Edge Metrics Server는 수집된 메트릭을 시각화하기 위한 Grafana 대시보드를 제공합니다.
 
-Grafana 대시보드를 통해 엣지 디바이스의 전력 메트릭을 실시간으로 시각화하고, 특정 시간 범위의 에너지 사용량 통계를 분석할 수 있습니다.
+### 1. Edge Devices Power & Energy Monitoring
+**파일**: `manifests/grafana-dashboard.json`
 
-### Accessing Grafana
+전체 edge 디바이스의 전력 및 에너지 모니터링 대시보드입니다.
 
-Grafana는 kube-prometheus-stack을 통해 monitoring 네임스페이스에 설치되어 있습니다.
+**주요 패널:**
+- 실시간 전력 메트릭 (모든 전력 메트릭)
+- 디바이스별 전력 순위 (Boxplot)
+- 디바이스별 전력 사용 세부 내역 (Pie Chart)
 
-**NodePort 접속 (외부에서 접속)**
-```bash
-# NodePort 확인
-kubectl get svc -n monitoring monitoring-grafana
+### 2. Jetson Power Analysis (이기종 디바이스)
+**파일**: `manifests/grafana-dashboard-jetson-power.json`
+**UID**: `jetson-power-analysis`
 
-# 브라우저에서 접속
-http://<NodeIP>:31932
-```
+Jetson Nano, Xavier, Orin 이기종 디바이스의 전력 분석 전용 대시보드입니다.
 
-**Port Forward 접속 (로컬에서 접속)**
-```bash
-kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
+**주요 패널:**
+1. **디바이스 간 전력 비교** (외부 플러그 기준)
+   - Shelly 플러그로 측정된 보드 전체 전력을 기준으로 공정하게 비교
+   - 모든 선택된 디바이스를 한 그래프에 표시
 
-# 브라우저에서 접속
-http://localhost:3000
-```
+2. **전력 비교 (내부 vs 외부)** (Repeat Panel by hostname)
+   - 내부 Total Power: 모델별 자동 선택
+     - Nano: `pom_5v_in_watts`
+     - Xavier: `vdd_in_watts`
+     - Orin: 4개 레일 합산 (`vdd_cpu_cv + vdd_gpu_soc + vddq_vdd2_1v8ao + vin_sys_5v0`)
+   - 외부 Shelly: 실제 보드 전체 전력
 
-**기본 로그인 정보**
-- Username: `admin`
-- Password: `prom-operator` (kube-prometheus-stack 기본값)
+3. **내부 레일 분해** (Repeat Panel by hostname)
+   - Stacked Area 그래프로 각 디바이스의 모든 내부 전력 레일 표시
+   - 모델별로 존재하는 레일만 자동 표시
 
-### Dashboard Import
+4. **Unaccounted Power** (Repeat Panel by hostname)
+   - `(Shelly - 내부 Total) / Shelly * 100` 비율(%) 표시
+   - 색상: Green → Yellow → Orange → Red (비율에 따라)
+   - 전압변환 손실, 주변기기, 미측정 레일 등의 전력 파악
 
-**방법 1: JSON 파일로 Import**
+**Variables:**
+- `device_type`: 디바이스 타입 필터 (Multi-select)
+- `hostname`: 호스트명 필터 (Multi-select)
 
-1. Grafana에 로그인
-2. 왼쪽 메뉴에서 `Dashboards` → `Import` 클릭
-3. `Upload JSON file` 선택
-4. `manifests/grafana-dashboard.json` 파일 업로드
-5. Prometheus 데이터소스 선택 (기본: `prometheus`)
-6. `Import` 버튼 클릭
-
-**방법 2: JSON 내용 직접 붙여넣기**
-
-1. `manifests/grafana-dashboard.json` 파일 내용 복사
-2. Grafana에서 `Dashboards` → `Import` → `Import via panel json`
-3. JSON 내용 붙여넣기
-4. `Load` → `Import` 클릭
-
-### Dashboard Panels
-
-**1. 실시간 전력 메트릭 (Real-time Power Metrics)**
-- 모든 디바이스의 전력 메트릭을 시계열 그래프로 표시
-- 디바이스 타입별 필터링 가능 (`$device_type` 변수)
-- 호스트명 필터링 가능 (`$hostname` 변수)
-- Legend에 Last, Mean, Max 값 표시
-
-**2. 총 에너지 사용량 (Total Energy Usage)**
-- 선택한 시간 범위 내의 총 에너지 사용량 (Wh)
-- 디바이스 타입별 (Xavier, Nano, Orin) 집계
-- Stat 패널로 표시
-
-**3. 평균/최대/최소 전력 (Average/Max/Min Power)**
-- 선택한 시간 범위의 통계값
-- 워크로드 분석 시 유용
-
-**4. 디바이스별 에너지 사용 비율 (Energy Usage by Device)**
-- Pie Chart로 디바이스별 에너지 사용 비중 표시
-- 호스트명별 비교
-
-**5. 디바이스별 전력/에너지 통계 (Power/Energy Statistics)**
-- Table 형식으로 모든 통계를 한눈에 확인
-- 디바이스별 평균/최대/최소 전력 및 총 에너지
-
-### Dashboard Variables
-
-대시보드 상단의 변수 선택기를 통해 필터링 가능:
-
-- `$device_type`: 디바이스 타입 선택 (jetson_xavier, jetson_nano, jetson_orin)
-- `$hostname`: 호스트명 선택 (V2X-GATEWAY, nano, orin-desktop 등)
-- 기본값: `All` (모든 디바이스 표시)
-
-### PromQL Query Examples
-
-**실시간 전력 (Xavier)**
-```promql
-jetson_power_vdd_in_watts{device_type="jetson_xavier"}
-```
-
-**시간 범위 내 총 에너지 (Nano)**
-```promql
-sum(increase(jetson_power_pom_5v_in_watts{device_type="jetson_nano"}[$__range]) * $__range_s / 3600)
-```
-
-**평균 전력 (Orin)**
-```promql
-avg_over_time(jetson_power_vdd_gpu_soc_watts{device_type="jetson_orin"}[$__range]) +
-avg_over_time(jetson_power_vdd_cpu_cv_watts{device_type="jetson_orin"}[$__range]) +
-avg_over_time(jetson_power_vin_sys_5v0_watts{device_type="jetson_orin"}[$__range])
-```
-
-**디바이스별 에너지 합계**
-```promql
-sum by (hostname) (increase(jetson_power_vdd_in_watts[$__range]) * $__range_s / 3600)
-```
-
-### Workload Analysis Guide
-
-워크로드별 에너지 절감 효율을 검증하는 방법:
-
-**1. 워크로드 실행 전 시간 기록**
-```bash
-# 워크로드 시작 시간
-START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-echo "Workload started at: $START_TIME"
-```
-
-**2. 워크로드 실행**
-```bash
-# 예시: AI 추론 작업
-python inference.py
-```
-
-**3. 워크로드 종료 후 시간 기록**
-```bash
-# 워크로드 종료 시간
-END_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-echo "Workload ended at: $END_TIME"
-```
-
-**4. Grafana에서 분석**
-
-- 대시보드 상단 Time Range에서 Custom Range 선택
-- From: `$START_TIME`, To: `$END_TIME` 입력
-- 또는 Absolute time range로 직접 지정
-
-**5. 에너지 사용량 확인**
-
-- "총 에너지 사용량" 패널에서 해당 구간의 에너지 확인 (Wh)
-- "평균 전력" 패널에서 평균 전력 확인 (W)
-- "최대 전력" 패널에서 피크 전력 확인 (W)
-
-**6. 워크로드 비교**
-
-예시: 두 가지 AI 모델의 에너지 효율 비교
-```bash
-# Model A 실행 (10:00:00 ~ 10:05:00)
-# Grafana에서 확인: 5.2 Wh, 평균 3.8W
-
-# Model B 실행 (10:10:00 ~ 10:15:00)
-# Grafana에서 확인: 4.1 Wh, 평균 3.2W
-
-# 결론: Model B가 21% 더 에너지 효율적
-```
-
-### Tips
-
-**자동 새로고침 설정**
-- 대시보드 우측 상단의 Refresh 주기 설정: `5s`, `10s`, `30s` 등
-- 실시간 모니터링 시 유용
-
-**시간 범위 단축키**
-- `t z`: Zoom out time range
-- `Ctrl + Z`: Zoom to data
-- 드래그로 특정 구간 선택 가능
-
-**Annotation 추가**
-- 워크로드 시작/종료 시점에 Annotation 추가
-- 대시보드 설정 → Annotations → `+Add annotation query`
-- 수동으로 마커 추가 가능
-
-**Dashboard Export**
-```bash
-# Dashboard를 JSON으로 저장 (백업용)
-# Grafana UI에서: Dashboard settings → JSON Model → Copy to Clipboard
-```
-
-### Troubleshooting
-
-**메트릭이 표시되지 않는 경우**
-
-1. Prometheus가 메트릭을 수집하고 있는지 확인
-```bash
-# Prometheus Targets 확인
-kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
-# http://localhost:9090/targets 열기
-```
-
-2. ServiceMonitor가 정상 동작하는지 확인
-```bash
-kubectl get servicemonitor -n monitoring edge-devices
-kubectl describe servicemonitor -n monitoring edge-devices
-```
-
-3. 디바이스가 healthy 상태인지 확인
-```bash
-curl http://edge-metrics-server:8081/devices
-```
-
-**"No data" 에러**
-
-- 선택한 시간 범위에 데이터가 없을 수 있음
-- 디바이스 변수 (`$device_type`, `$hostname`)가 올바른지 확인
-- Prometheus 데이터소스가 올바르게 설정되었는지 확인
-
-**에너지 계산 값이 이상한 경우**
-
-- `$__range_s` 변수는 선택한 시간 범위(초)를 의미
-- 에너지(Wh) = 전력(W) × 시간(h)
-- PromQL의 `increase()` 함수는 Counter 메트릭에만 사용 가능
-- Gauge 메트릭의 경우 `avg_over_time() * time_range` 사용
+**특징:**
+- Orin의 Total Power는 4개 레일 합산으로 자동 계산
+- PromQL `or` 연산자로 모델별 메트릭 자동 선택
+- Repeat Panel로 디바이스별 상세 분석 자동 생성
 
 ---
-
-## Client Integration
-
-### Exporter Auto-Registration Flow
-
-```
-1. Exporter 시작
-2. GET /config/{hostname} → 404 (미등록)
-3. Local config.yaml 로드
-4. PUT /config/{hostname} → 200 {"status": "registered"}
-5. 다음 시작 시 GET → 200 (등록된 설정 사용)
-```
-
-### Example Client Code (Python)
-
-```python
-import requests
-
-# 설정 조회
-response = requests.get(f"{server}/config/{device_id}")
-config = response.json()
-
-# 설정 등록/업데이트
-requests.put(f"{server}/config/{device_id}", json=config)
-```
